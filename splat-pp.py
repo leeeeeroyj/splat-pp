@@ -12,12 +12,12 @@ from PIL import Image
 import numpy as np
 
 class PNGToArduinoMacro:
-    def __init__(self, duration=50, debug=False):
+    def __init__(self, duration=25, debug=False):
         """
         Initialize the PNG to Arduino macro converter
         
         Args:
-            duration: Duration in milliseconds for button presses and movements
+            duration: Duration in milliseconds for button presses and movements (optimal: 25ms for Switch timing)
             debug: Whether to print debug information
         """
         self.duration = duration
@@ -112,86 +112,87 @@ void {function_name}(unsigned int duration = {self.duration}) {{
         return code
     
     def _generate_optimized_pattern(self, pixels, width, height):
-        """Generate optimized drawing commands using for loops where possible"""
+        """Generate optimized drawing commands - only visit and draw black pixels
+        
+        Algorithm:
+        1. Identify all drawable rows (rows with at least one black pixel)
+        2. Alternate direction between drawable rows (L->R, R->L, L->R...)
+        3. For each row, move to first black pixel, draw consecutive pixels, skip white gaps
+        4. Move directly to next drawable row (skip entirely empty rows)
+        """
         commands = []
         
-        # Track if we've drawn anything yet (for initial positioning)
-        first_pixel = True
+        # Find all drawable rows with their black pixel positions
+        drawable_rows = []
+        for row in range(min(height, self.max_height)):
+            black_positions = [col for col in range(min(width, self.max_width))
+                             if pixels[row, col] == 0]
+            if black_positions:
+                drawable_rows.append((row, black_positions))
+        
+        if not drawable_rows:
+            commands.append("// No black pixels found in image")
+            return commands
+        
+        # Track current cursor position
         current_row = 0
         current_col = 0
         
-        for row in range(min(height, self.max_height)):
-            # Get black pixel positions for this row
-            black_positions = []
-            for col in range(min(width, self.max_width)):
-                if pixels[row, col] == 0:  # Black pixel
-                    black_positions.append(col)
-            
-            if not black_positions:
-                if self.debug:
-                    commands.append(f"// Skipping empty row {row}")
-                continue
-            
-            # Determine direction for this row (even = left-to-right, odd = right-to-left)
-            left_to_right = (row % 2 == 0)
+        for draw_idx, (row, black_positions) in enumerate(drawable_rows):
+            # Determine direction based on drawable row index (alternating L->R, R->L)
+            left_to_right = (draw_idx % 2 == 0)
             
             if self.debug:
                 direction = "left-to-right" if left_to_right else "right-to-left"
-                commands.append(f"// Row {row}: {direction} - {len(black_positions)} pixels")
+                commands.append(f"// Row {row} (drawable row {draw_idx}): {direction} - {len(black_positions)} pixels")
             
             # Sort positions based on direction
             if not left_to_right:
                 black_positions.reverse()
             
-            # Handle initial positioning to this row
-            if first_pixel:
-                # Move to starting position
+            # Move to this row
+            if draw_idx == 0:
+                # Initial positioning: move down to first drawable row
                 if row > 0:
                     if row == 1:
                         commands.append("setDPad(DPAD_DOWN, duration);")
                     else:
                         commands.append(f"for(int i = 0; i < {row}; i++) setDPad(DPAD_DOWN, duration);")
-                
-                start_col = black_positions[0]
-                if start_col > 0:
-                    if start_col == 1:
+                current_row = row
+            else:
+                # Move down from previous drawable row to this row (skip empty rows)
+                prev_row = drawable_rows[draw_idx - 1][0]
+                row_diff = row - prev_row
+                if row_diff == 1:
+                    commands.append("setDPad(DPAD_DOWN, duration);")
+                else:
+                    commands.append(f"for(int i = 0; i < {row_diff}; i++) setDPad(DPAD_DOWN, duration);")
+                current_row = row
+            
+            # Move to first black pixel in this row
+            first_pixel_col = black_positions[0]
+            if first_pixel_col != current_col:
+                col_diff = first_pixel_col - current_col
+                if col_diff > 0:  # Move right
+                    if col_diff == 1:
                         commands.append("setDPad(DPAD_RIGHT, duration);")
                     else:
-                        commands.append(f"for(int i = 0; i < {start_col}; i++) setDPad(DPAD_RIGHT, duration);")
-                
-                current_row = row
-                current_col = start_col
-                first_pixel = False
-            else:
-                # Move down to this row
-                commands.append("setDPad(DPAD_DOWN, duration);")
-                current_row = row
-                
-                # Adjust horizontal position if needed
-                target_col = black_positions[0]
-                if target_col != current_col:
-                    col_diff = target_col - current_col
-                    if col_diff > 0:  # Move right
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_RIGHT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_RIGHT, duration);")
-                    else:  # Move left
-                        col_diff = abs(col_diff)
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_LEFT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_LEFT, duration);")
-                    current_col = target_col
+                        commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_RIGHT, duration);")
+                else:  # Move left
+                    col_diff = abs(col_diff)
+                    if col_diff == 1:
+                        commands.append("setDPad(DPAD_LEFT, duration);")
+                    else:
+                        commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_LEFT, duration);")
+            current_col = first_pixel_col
             
-            # Process pixels in this row, looking for consecutive sequences
+            # Draw all black pixels in this row
             i = 0
             while i < len(black_positions):
-                # Find consecutive sequence starting at position i
+                # Find consecutive sequence of black pixels
                 sequence_start = i
                 sequence_end = i
                 
-                # Look for consecutive pixels
                 while (sequence_end + 1 < len(black_positions) and 
                        black_positions[sequence_end + 1] == black_positions[sequence_end] + 1):
                     sequence_end += 1
@@ -205,16 +206,11 @@ void {function_name}(unsigned int duration = {self.duration}) {{
                     # Multiple consecutive pixels - use for loop
                     commands.append(f"for(int i = 0; i < {sequence_length}; i++) {{")
                     commands.append("  pressButton(BUTTON_A_INDEX, duration, duration);")
-                    if sequence_length > 1:  # Don't move after the last pixel in sequence
-                        commands.append("  if(i < " + str(sequence_length - 1) + ") setDPad(" + 
-                                      ("DPAD_RIGHT" if left_to_right else "DPAD_LEFT") + ", duration);")
+                    commands.append("  if(i < " + str(sequence_length - 1) + ") setDPad(" + 
+                                  ("DPAD_RIGHT" if left_to_right else "DPAD_LEFT") + ", duration);")
                     commands.append("}")
-                    
-                    # Update current position
-                    if left_to_right:
-                        current_col = black_positions[sequence_end]
-                    else:
-                        current_col = black_positions[sequence_end]
+                
+                current_col = black_positions[sequence_end]
                 
                 # Move to next sequence if there is one
                 if sequence_end + 1 < len(black_positions):
@@ -237,42 +233,61 @@ void {function_name}(unsigned int duration = {self.duration}) {{
                 
                 i = sequence_end + 1
         
-        if not commands or all("// " in cmd for cmd in commands):
-            commands.append("// No black pixels found in image")
-        
         return commands
     
     def _estimate_execution_time(self, pixels, width, height):
-        """Estimate the total execution time in minutes"""
+        """Estimate the total execution time in minutes
+        
+        Accounts for:
+        - Black pixel drawing time (press + release per pixel)
+        - D-Pad movement overhead
+        - Only drawable rows (skips empty rows)
+        - Real-world overhead buffer
+        """
+        # Count black pixels
         black_pixels = np.sum(pixels == 0)
         
-        # More accurate estimate considering the optimizations
-        # Each black pixel takes 2 duration periods (press + release)
+        # Find all drawable rows
+        drawable_rows = []
+        for row in range(min(height, self.max_height)):
+            if np.any(pixels[row, :min(width, self.max_width)] == 0):
+                drawable_rows.append(row)
+        
+        # Drawing time: each black pixel takes 2 duration periods (press + release)
         pixel_time = black_pixels * (self.duration * 2) / 1000.0  # Convert ms to seconds
         
-        # Estimate movement time (reduced due to for loop optimizations)
-        # Count actual movements needed (this is approximate)
+        # Movement time: estimate D-Pad movements
         movement_count = 0
-        prev_row = -1
         
-        for row in range(min(height, self.max_height)):
-            has_black = False
-            for col in range(min(width, self.max_width)):
-                if pixels[row, col] == 0:
-                    has_black = True
-                    break
+        # Initial positioning to first drawable row
+        if drawable_rows:
+            movement_count += drawable_rows[0]  # Down movements to first row
             
-            if has_black:
-                if prev_row >= 0:
-                    movement_count += 1  # Move down
-                # Add horizontal movements (rough estimate)
-                black_in_row = np.sum(pixels[row, :min(width, self.max_width)] == 0)
-                movement_count += max(0, black_in_row - 1)  # Horizontal moves between pixels
-                prev_row = row
+            # For each drawable row, estimate movements
+            for idx, row in enumerate(drawable_rows):
+                black_positions = [col for col in range(min(width, self.max_width))
+                                 if pixels[row, col] == 0]
+                
+                if black_positions:
+                    # Horizontal movement to first pixel
+                    movement_count += black_positions[0]  # Conservative estimate
+                    
+                    # Movements within row (between black pixels)
+                    for i in range(len(black_positions) - 1):
+                        gap = black_positions[i + 1] - black_positions[i]
+                        movement_count += max(1, gap - 1)  # Gap between consecutive black pixels
+                    
+                    # Movement to next drawable row
+                    if idx < len(drawable_rows) - 1:
+                        next_row = drawable_rows[idx + 1]
+                        movement_count += (next_row - row)
         
         movement_time = movement_count * (self.duration / 1000.0)
         
-        return (pixel_time + movement_time) / 60  # Return in minutes
+        # Add 15% safety buffer for real-world overhead and USB timing uncertainties
+        total_time = (pixel_time + movement_time) * 1.15
+        
+        return total_time / 60  # Return in minutes
     
     def _print_debug_info(self, pixels, width, height):
         """Print debug information about the image"""
@@ -374,8 +389,8 @@ def main():
     
     parser.add_argument('input_image', nargs='?', help='Path to input PNG image')
     parser.add_argument('output_file', nargs='?', help='Path to output Arduino file (.ino)')
-    parser.add_argument('--duration', type=int, default=50,
-                       help='Duration in milliseconds for button presses (default: 50)')
+    parser.add_argument('--duration', type=int, default=25,
+                       help='Duration in milliseconds for button presses (default: 25ms - optimal for Switch timing)')
     parser.add_argument('--function-name', default='drawImage',
                        help='Name for the generated Arduino function (default: drawImage)')
     parser.add_argument('--debug', action='store_true',
@@ -385,6 +400,14 @@ def main():
                        help='Generate a test pattern instead of processing input image')
     
     args = parser.parse_args()
+    
+    # Validate duration range (outside 20-200ms risks USB/Switch timing issues)
+    if args.duration < 20:
+        print(f"Warning: Duration {args.duration}ms is below 20ms (optimal range is 20-200ms)")
+        print("         Timing below 20ms may cause missed inputs on Switch due to USB throttling")
+    elif args.duration > 200:
+        print(f"Warning: Duration {args.duration}ms is above 200ms (optimal range is 20-200ms)")
+        print("         Timing above 200ms will be very slow for drawing")
     
     # Create converter
     converter = PNGToArduinoMacro(duration=args.duration, debug=args.debug)
