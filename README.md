@@ -1,160 +1,165 @@
-# splat-pp: PNG to Splatoon 3 Drawing Macro Converter
+# splat-pp — Splatoon 3 Plaza Post Printer
 
-Convert black and white PNG images (320×120 pixels) into Arduino macros that draw on Splatoon 3's Plaza Post Printer using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
+Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's **Post Printer** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
 
-## How It Works
+![godHead example image](godHead.png)
 
-The tool converts a PNG image into a sequence of D-Pad movements and button presses:
-- **D-Pad** controls cursor position (up/down/left/right)
-- **A button** stamps the brush at the current position
-- **Drawing strategy**: Move to each black pixel in the image, draw it, then move to the next
+---
 
-The algorithm optimizes macro size and execution time by:
-1. Identifying drawable rows (rows containing ≥1 black pixel)
-2. Skipping entirely empty rows (no wasted movement commands)
-3. Alternating direction between rows (L→R, R→L, L→R...) to minimize cursor travel
-4. Bundling consecutive pixels into efficient for loops
+## How it works
 
-## Setup
+`splat-pp.py` reads a 320×120 pixel B&W PNG and converts it into a sequence of D-Pad moves and A button presses that trace every black pixel on the canvas.
 
-```bash
-cd 
-mkdir -p tools/splat-pp
-cd tools/splat-pp
+The drawing sequence is encoded as a compact **bytecode array** stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. This approach keeps the compiled binary tiny regardless of image complexity — even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
 
-# Create and activate conda environment
-conda create --name splat-pp python=3.11 -y
-conda activate splat-pp
+### Drawing strategy
 
-# Install dependencies
-pip install numpy pillow
+Pixels are visited using a **snake scan** (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimises total cursor travel and keeps draw time as short as possible.
+
+### Bytecode format
+
+Each instruction is 1–3 bytes:
+
+| Opcode | Hex | Arguments | Action |
+|--------|-----|-----------|--------|
+| `OP_DRAW` | `0x00` | — | Press A (stamp pixel) |
+| `OP_UP` | `0x01` | `n` (1 byte) | Move cursor up n steps |
+| `OP_DOWN` | `0x02` | `n` (1 byte) | Move cursor down n steps |
+| `OP_LEFT` | `0x03` | `n` (1 byte) | Move cursor left n steps |
+| `OP_RIGHT` | `0x04` | `n` (1 byte) | Move cursor right n steps |
+
+Moves larger than 255 steps are split into multiple instructions automatically.
+
+---
+
+## Requirements
+
+### Hardware
+
+- **Teensy 4.0** microcontroller
+- USB cable (Teensy → Nintendo Switch)
+- A momentary pushbutton wired to GPIO pin 0
+
+### Software
+
+- Python 3.11+
+- [Arduino IDE](https://www.arduino.cc/en/software) 1.8.x with [Teensyduino](https://www.pjrc.com/teensy/td_download.html)
+- Python packages:
+
 ```
+pip install pillow numpy
+```
+
+---
 
 ## Usage
 
-### Basic Usage
-Convert an image with default 25ms timing:
-```bash
-python splat-pp.py img/myimage.png
 ```
-Output: `macro/myimage.ino`
-
-### Specify Output File
-```bash
-python splat-pp.py img/myimage.png custom_output.ino
+python splat-pp.py <image.png> [--duration <ms>] [--output <file>] [--preview]
 ```
 
-### Custom Duration
-Duration controls button press timing in milliseconds. **Default: 25ms (optimal for Nintendo Switch timing)**
-```bash
-python splat-pp.py img/myimage.png --duration 25
+### Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `image.png` | — | Source image (PNG, ideally 320×120) |
+| `--duration` | `25` | Milliseconds per action (range: 20–200) |
+| `--output` | `drawImage.ino` | Output filename |
+| `--preview` | off | Print an ASCII preview of the thresholded image |
+
+### Example
+
+```
+python splat-pp.py mypost.png --duration 25 --output drawImage.ino --preview
 ```
 
-Valid range: 20-200ms
-- Below 20ms: Risk of missed inputs (USB throttling)
-- 25ms: ✅ Recommended (matches Switch polling rate at 60Hz)
-- Above 200ms: Too slow, drawing takes very long
+Output:
+```
+Loading image: mypost.png
+  Black pixels: 22,750 / 38,400
 
-### Generate Test Patterns
-Useful for calibration and testing:
-```bash
-python splat-pp.py --test-pattern border      # Border around 320×120 canvas
-python splat-pp.py --test-pattern checkerboard
-python splat-pp.py --test-pattern stripes
-python splat-pp.py --test-pattern cross
+ASCII Preview:
++--------------------------------------------------------------------------------+
+|   XX   XXXX  XX  ...                                                           |
++--------------------------------------------------------------------------------+
+
+Planning snake-scan move sequence...
+  Draw operations: 22,750
+Encoding bytecode...
+  Bytecode size : 68,318 bytes
+  Est. draw time: 3056s (50.9 min)
+
+Done! Written to: drawImage.ino
 ```
 
-### Custom Function Name
-```bash
-python splat-pp.py img/myimage.png --function-name drawMyImage
+---
+
+## Image requirements
+
+- **Format:** PNG
+- **Dimensions:** 320×120 pixels (other sizes are resized automatically)
+- **Color:** Pure black (`#000000`) and white only — black pixels are drawn, white pixels are skipped
+- **Grayscale input** is accepted and thresholded at 50% brightness automatically
+
+For best results, prepare your image at exactly 320×120 in an image editor and convert to 1-bit B&W before running the script.
+
+---
+
+## Integration with the Arduino sketch
+
+The generated `drawImage.ino` file contains two things: a `PROGMEM` data array holding the encoded moves, and a `drawImage()` function that interprets them. Paste the entire contents into your sketch at the marked location:
+
+```cpp
+////////////////////////////////////////
+// PASTE THE drawImage FUNCTION BELOW //
+////////////////////////////////////////
+
+// → paste drawImage.ino contents here
+
+////////////////////////////////////////
 ```
 
-### Debug Output
-Show detailed statistics about the image and macro:
-```bash
-python splat-pp.py img/myimage.png --debug
-```
+The sketch's `runMacro()` function handles everything else automatically:
 
-## Deployment to Arduino
+1. Registers the controller with the Switch (3× A press)
+2. Sets the smallest pen size (2× L press)
+3. Clears the canvas (L-stick click)
+4. Moves the cursor to the top-left corner (analog stick held for 7 seconds)
+5. Calls `drawImage()` to draw your image
+6. Saves and exits (Minus press)
 
-### 1. Prepare the Sketch
-- Open Arduino IDE
-- Copy the contents of `sketch.txt` into a new sketch
-- Find the comment: `// PASTE THE drawImage FUNCTION BELOW //`
-- Copy your generated `.ino` file contents into that location
+Press the button wired to GPIO pin 0 to start the macro. The Switch must already be on the Post Printer canvas screen.
 
-### 2. Compile and Upload
-- Select Teensy 4.0 as the board
-- Compile the sketch
-- Press the PROGRAM MODE BUTTON on the Teensy when prompted
+---
 
-**Note**: You may see errors during upload (e.g., "No Teensy boards found"), but the sketch usually uploads successfully if the PROGRAM button was pressed.
+## Timing
 
-### 3. Pair with Switch
-- Connect the Teensy to the Switch via USB
-- In Splatoon 3, open Plaza Post station
-- Force disconnect your current controller (hold pairing button)
-- When the "connect controller" screen appears, press the trigger button on the Teensy
-- The macro will automatically:
-  1. Register the controller
-  2. Clear the canvas
-  3. Reset to position (0,0)
-  4. Draw the image
+The `--duration` parameter controls how long each individual D-Pad tap or button press is held (in milliseconds). Lower values draw faster but may cause missed inputs on slower connections.
 
-## Image Requirements
+| Duration | Reliability | ~Draw time (half-filled canvas) |
+|----------|-------------|----------------------------------|
+| 20ms | Marginal | ~25 min |
+| 25ms | Good (default) | ~30 min |
+| 50ms | Very reliable | ~60 min |
 
-- **Format**: PNG (black and white)
-- **Dimensions**: 320×120 pixels (or larger; will be cropped)
-- **Colors**: Use pure black (#000000) for pixels to draw, white for empty space
-- **File size**: Images are scaled to fit the canvas; larger images will be cropped
+Draw time scales with the number of black pixels in your image. A fully filled 320×120 canvas at 25ms takes roughly 50–60 minutes.
 
-## Output Statistics
+---
 
-The script shows:
-- **Black pixels to draw**: Total pixels that will be stamped
-- **Estimated execution time**: How long the macro will take (in minutes)
-- **Debug info** (with `--debug`): Rows, pixel sequences, optimization details
+## Technical notes
 
-Example:
-```
-Processing image: becool2.png
-Image dimensions: 320x120
-Arduino macro saved to: macro/becool2.ino
-Function name: drawImage
-Black pixels to draw: 15253
-Estimated execution time: 31.8 minutes
-```
+### Why bytecode instead of function calls?
 
-## Troubleshooting
+An earlier approach generated one Arduino function call per drawing step. For complex images this produced 60,000+ lines of C, which overflowed the Teensy 4.0's 512 KB ITCM (tightly-coupled instruction memory) region and either failed to compile or took many minutes to do so.
 
-### Issue: Timing warnings appear
-**Problem**: Script warns about duration < 20ms or > 200ms
-**Solution**: Use 25ms (default) for optimal results
+Storing the moves as a `PROGMEM` byte array sidesteps this entirely. Data lives in regular flash (2 MB on the Teensy 4.0); only the ~30-line interpreter loop occupies ITCM. Compile times drop to a few seconds regardless of image complexity.
 
-### Issue: Arduino upload fails
-**Problem**: "No Teensy boards found" or similar errors
-**Solution**: 
-- Press PROGRAM MODE BUTTON on Teensy when prompted
-- Ensure Teensy drivers are installed
-- Try uploading again
+### Cursor coordinate system
 
-### Issue: Macro doesn't execute on Switch
-**Problem**: Controller pairs but macro doesn't run
-**Solution**:
-- Verify controller is properly registered in Switch settings
-- Ensure canvas is clear before running macro
-- Check that the `.ino` file was correctly inserted into `sketch.txt`
+The cursor origin `(0, 0)` is the **top-left** corner of the Post Printer canvas. The sketch's `runMacro()` function ensures the cursor is reset there by holding the left analog stick fully up-left for 7 seconds before `drawImage()` is called.
 
-### Issue: Drawing is incomplete or wrong
-**Problem**: Only part of the image draws or positions are incorrect
-**Solution**:
-- Verify image is exactly 320×120 pixels
-- Check that image is pure black/white (no gray)
-- Try a test pattern first (`--test-pattern border`) to verify positioning
+---
 
-## Hardware Requirements
+## License
 
-- **Microcontroller**: Teensy 4.0
-- **Arduino IDE**: Latest version with Teensy support
-- **Libraries**: NSGamepad (included with Teensy installation)
-- **USB Cable**: To connect Teensy to Switch 
+MIT
