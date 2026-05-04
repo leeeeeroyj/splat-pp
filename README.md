@@ -55,7 +55,7 @@ pip install pillow numpy
 ## Usage
 
 ```
-python splat-pp.py <image.png> [--duration <ms>] [--output <file>] [--preview]
+python splat-pp.py <image.png> [options]
 ```
 
 ### Arguments
@@ -64,18 +64,36 @@ python splat-pp.py <image.png> [--duration <ms>] [--output <file>] [--preview]
 |----------|---------|-------------|
 | `image.png` | — | Source image (PNG, ideally 320×120) |
 | `--duration` | `25` | Milliseconds per action (range: 20–200) |
-| `--output` | `drawImage.ino` | Output filename |
+| `--template` | `sketch.txt` | Path to Arduino sketch template |
+| `--full` | off | Generate complete sketch (with template merged) |
+| `--output` | auto | Output filename (default: `<input>.ino` in `sketch/`) |
 | `--preview` | off | Print an ASCII preview of the thresholded image |
+
+### Output modes
+
+**Function only** (default): Generates just the `drawImage()` function and bytecode array. Useful for manual integration or custom templates.
+
+```
+python splat-pp.py mypost.png --output drawImage.ino
+```
+
+**Full sketch** (`--full`): Merges the generated `drawImage()` function with the template file to produce a complete Arduino sketch ready to flash.
+
+```
+python splat-pp.py mypost.png --full
+```
+
+Output: `sketch/mypost.ino`
 
 ### Example
 
 ```
-python splat-pp.py mypost.png --duration 25 --output drawImage.ino --preview
+python splat-pp.py img/godHead.png --full --preview
 ```
 
 Output:
 ```
-Loading image: mypost.png
+Loading image: img/godHead.png
   Black pixels: 22,750 / 38,400
 
 ASCII Preview:
@@ -88,8 +106,11 @@ Planning snake-scan move sequence...
 Encoding bytecode...
   Bytecode size : 68,318 bytes
   Est. draw time: 3056s (50.9 min)
+Merging with template...
 
-Done! Written to: drawImage.ino
+Done! Written to: sketch/godHead.ino
+
+Flash to your Teensy 4.0 and press the trigger button
 ```
 
 ---
@@ -107,17 +128,13 @@ For best results, prepare your image at exactly 320×120 in an image editor and 
 
 ## Integration with the Arduino sketch
 
-The generated `drawImage.ino` file contains two things: a `PROGMEM` data array holding the encoded moves, and a `drawImage()` function that interprets them. Paste the entire contents into your sketch at the marked location:
+Use `--full` to generate a complete sketch that includes the template and the generated `drawImage()` function merged together:
 
-```cpp
-////////////////////////////////////////
-// PASTE THE drawImage FUNCTION BELOW //
-////////////////////////////////////////
-
-// → paste drawImage.ino contents here
-
-////////////////////////////////////////
 ```
+python splat-pp.py mypost.png --full
+```
+
+Output: `sketch/mypost.ino` — ready to compile and flash to your Teensy 4.0.
 
 The sketch's `runMacro()` function handles everything else automatically:
 
