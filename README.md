@@ -2,7 +2,7 @@
 
 Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's **Post Printer** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
 
-![godHead example image](godHead.png)
+![godHead example image](img/godHead.png)
 
 ---
 
@@ -10,11 +10,11 @@ Convert black-and-white PNG images into Arduino sketches that automatically draw
 
 `splat-pp.py` reads a 320×120 pixel B&W PNG and converts it into a sequence of D-Pad moves and A button presses that trace every black pixel on the canvas.
 
-The drawing sequence is encoded as a compact **bytecode array** stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. This approach keeps the compiled binary tiny regardless of image complexity — even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
+The drawing sequence is encoded as a compact **bytecode array** stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. This approach keeps the compiled binary tiny regardless of image complexity! Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
 
 ### Drawing strategy
 
-Pixels are visited using a **snake scan** (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimises total cursor travel and keeps draw time as short as possible.
+Pixels are visited using a **snake scan** (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
 
 ### Bytecode format
 
@@ -37,13 +37,14 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 ### Hardware
 
 - **Teensy 4.0** microcontroller
-- USB cable (Teensy → Nintendo Switch)
-- A momentary pushbutton wired to GPIO pin 0
+- USB cable (Teensy → Nintendo Switch & Programming PC)
+- A momentary push button wired to GPIO pin 0 (or hotwire it)
 
 ### Software
 
 - Python 3.11+
 - [Arduino IDE](https://www.arduino.cc/en/software) 1.8.x with [Teensyduino](https://www.pjrc.com/teensy/td_download.html)
+- [Arduino NS Gamepad for Teensy](https://github.com/gdsports/NSGadget_Teensy)
 - Python packages:
 
 ```

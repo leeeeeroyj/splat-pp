@@ -1,2 +1,3 @@
 *.png
 *.ino
+__pycache__/

@@ -17,9 +17,9 @@ You run it from Python using `subprocess`.
 ```python
 import subprocess
 
-SKETCH_PATH = "/path/to/your/sketch"   # folder containing the .ino file
-BOARD_FQBN  = "arduino:avr:uno"        # Fully Qualified Board Name
-PORT        = "/dev/ttyUSB0"           # e.g. COM3 on Windows
+SKETCH_PATH = "sketch/"                 # Folder containing the .ino file
+BOARD_FQBN  = "teensy:avr:teensy40"     # Fully Qualified Board Name
+MCU         = "TEENSY40"                # MicroContollerUnit 
 
 # Compile
 compile_result = subprocess.run(
@@ -42,41 +42,5 @@ if upload_result.returncode != 0:
 ```
 
 ## Setup steps
+See arduino-cli Setup.md for information on the cli setup. 
 
-1. **Install Arduino CLI** — download from [arduino.cc/pro/cli](https://arduino.cc/pro/cli) or via a package manager:
-   ```bash
-   # macOS
-   brew install arduino-cli
-
-   # Windows (via Chocolatey)
-   choco install arduino-cli
-   ```
-
-2. **Install the core for your board** (one-time setup):
-   ```bash
-   arduino-cli core update-index
-   arduino-cli core install arduino:avr   # for Uno, Nano, Mega, etc.
-   ```
-
-3. **Find your board's FQBN and port:**
-   ```bash
-   arduino-cli board list        # shows connected boards and ports
-   arduino-cli board listall     # search for your board's FQBN
-   ```
-
-## Common FQBNs
-
-| Board | FQBN |
-|---|---|
-| Uno | `arduino:avr:uno` |
-| Nano | `arduino:avr:nano` |
-| Mega 2560 | `arduino:avr:mega` |
-| Leonardo | `arduino:avr:leonardo` |
-| ESP32 | `esp32:esp32:esp32` |
-
-## Port tips by OS
-- **Windows:** `COM3`, `COM4`, etc.
-- **macOS:** `/dev/cu.usbmodem*` or `/dev/cu.usbserial*`
-- **Linux:** `/dev/ttyUSB0` or `/dev/ttyACM0`
-
-You can even auto-detect the port in Python by running `arduino-cli board list` and parsing the output, so the whole pipeline — generate sketch → compile → upload — can be fully automated.
