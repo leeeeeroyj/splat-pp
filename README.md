@@ -2,7 +2,7 @@
 
 Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's **Post Printer** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
 
-![godHead example image](img/godHead.png)
+![Example Image](example.png)
 
 ---
 
