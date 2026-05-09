@@ -1,6 +1,6 @@
 # splat-pp — Splatoon 3 Post Printer
 
-Convert black-and-white PNG images into Arduino sketches that automatically draw on **Splatoon 3's Plaza Post** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
+Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's Plaza Post canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
 
 ![Example Image](example.png)
 
@@ -10,11 +10,11 @@ Convert black-and-white PNG images into Arduino sketches that automatically draw
 
 `splat-pp.py` reads a 320×120 pixel B&W PNG and converts it into a sequence of D-Pad moves and A button presses that trace every black pixel on the canvas.
 
-The drawing sequence is encoded as a compact **bytecode array** stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. This approach keeps the compiled binary tiny regardless of image complexity! Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
+The drawing sequence is encoded as a compact bytecode array stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. This approach keeps the compiled binary tiny regardless of image complexity! Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
 
 ### Drawing strategy
 
-Pixels are visited using a **snake scan** (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
+Pixels are visited using a "snake scan" (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
 
 ### Bytecode format
 
@@ -36,7 +36,7 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 
 ### Hardware
 
-- **Teensy 4.0** microcontroller
+- Teensy 4.0 microcontroller
 - USB cable (Teensy → Nintendo Switch & Programming PC)
 - A momentary push button wired to GPIO pin 0 (or hotwire it)
 
@@ -145,7 +145,7 @@ Done! Connect your Teensy to the Switch and head to the plaza post printer!
 
 - **Format:** PNG
 - **Dimensions:** 320×120 pixels (other sizes are resized automatically)
-- **Color:** Pure black (`#000000`) and white only — black pixels are drawn, white pixels are skipped
+- **Color:** Pure black (`#000000`) and white only. Black pixels are drawn, white pixels are skipped
 - **Grayscale input** is accepted and thresholded at 50% brightness automatically
 
 For best results, prepare your image at exactly 320×120 in an image editor and convert to 1-bit B&W before running the script.
@@ -179,7 +179,7 @@ The `--duration` parameter controls how long each individual D-Pad tap or button
 | 25ms | Good (default) | ~30 min |
 | 50ms | Very reliable | ~60 min |
 
-Draw time scales with the number of black pixels in your image. A fully filled 320×120 canvas at 25ms takes roughly 50–60 minutes.
+Draw time scales with the number of black pixels in your image. A fully filled 320×120 canvas at 25ms takes roughly 50 - 60 minutes.
 
 ---
 
@@ -197,14 +197,8 @@ Storing the moves as a `PROGMEM` byte array sidesteps this entirely. Data lives 
 
 ### NSGadget_Teensy and the Teensy core
 
-NSGadget_Teensy is not a standard Arduino library — it works by patching USB descriptor and driver files directly into the Teensy core. The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork, which includes compatibility updates through Teensyduino 1.56. Additional patches are applied by the script for compatibility with Teensyduino 1.60.0.
+NSGadget_Teensy is not a standard Arduino library. It works by patching USB descriptor and driver files directly into the Teensy core. The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork, which includes compatibility updates through Teensyduino 1.56. Additional patches are applied by the script for compatibility with Teensyduino 1.60.0.
 
 ### Cursor coordinate system
 
-The cursor origin `(0, 0)` is the **top-left** corner of the Post Printer canvas. The sketch's `runMacro()` function ensures the cursor is reset there by holding the left analog stick fully up-left for 7 seconds before `drawImage()` is called.
-
----
-
-## License
-
-MIT
+The cursor origin `(0, 0)` is the top-left corner of the Post Printer canvas. The sketch's `runMacro()` function ensures the cursor is reset there by holding the left analog stick fully up-left for 7 seconds before `drawImage()` is called.
