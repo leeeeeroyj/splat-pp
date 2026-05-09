@@ -1,6 +1,6 @@
-# splat-pp — Splatoon 3 Plaza Post Printer
+# splat-pp — Splatoon 3 Post Printer
 
-Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's **Post Printer** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
+Convert black-and-white PNG images into Arduino sketches that automatically draw on **Splatoon 3's Plaza Post** canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller.
 
 ![Example Image](example.png)
 
@@ -55,7 +55,7 @@ pip install pillow numpy
 
 ## Setup
 
-Environment setup is handled by `setup-nsgadget.sh`. This script installs and configures everything needed to compile and flash sketches from the command line — no Arduino IDE required.
+Environment setup is handled by `setup-nsgadget.sh`. This script installs and configures everything needed to compile and flash sketches from the command line. No Arduino IDE required!
 
 ### What the script does
 
@@ -63,7 +63,7 @@ Environment setup is handled by `setup-nsgadget.sh`. This script installs and co
 2. Configures `arduino-cli` to use `~/Arduino` as its data directory
 3. Installs the Teensy 4.0 core (v1.60.0)
 4. Backs up the stock core before modifying it
-5. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) — an updated fork of the NS Gamepad library
+5. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) > an updated fork of the NS Gamepad library (Thanks, dude!)
 6. Installs the `Bounce2` library
 7. Patches the Teensy core to support the `USB_NSGAMEPAD` USB type:
    - Adds `usb=nsgamepad` option to `boards.txt`
@@ -81,7 +81,7 @@ chmod +x setup-nsgadget.sh
 ./setup-nsgadget.sh
 ```
 
-The script is safe to run multiple times — it skips steps that are already complete.
+The script is safe to run multiple times. It skips steps that are already complete.
 
 > **Note:** After the script runs for the first time, log out and back in (or reboot) for the udev rules to take effect before flashing.
 
@@ -156,6 +156,8 @@ For best results, prepare your image at exactly 320×120 in an image editor and 
 
 The sketch's `runMacro()` function handles everything automatically once triggered:
 
+Default sketch.txt template covers these steps:
+
 1. Registers the controller with the Switch (3× A press)
 2. Sets the smallest pen size (2× L press)
 3. Clears the canvas (L-stick click)
@@ -163,8 +165,7 @@ The sketch's `runMacro()` function handles everything automatically once trigger
 5. Calls `drawImage()` to draw your image
 6. Saves and exits (Minus press)
 
-Open the post printer to start drawing a new post. Press sync button on your controller to disconnect it, forcing the controller screen to open. Press the button wired to GPIO pin 0 ONCE to start the macro. 
-The switch will recognize the Teensy as a pro controller, and then run the macro. The default template resets the canvas, grabs the small pen, and moves to 0,0 before starting the drawing pattern. 
+Open the post printer in the Splatoon 3 Plaza to start drawing a new post. Press the sync button on your controller to foce a disconnect. The controller screen should pop open. Press the button wired to GPIO pin 0 ONCE to start the macro. Let it run! When it is finished, you can disconnect the Teensy and reconnect your controllers. Head back to the post printer to review and share your post! 
 
 ---
 
