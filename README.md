@@ -136,7 +136,7 @@ Compiling godHead...
 
 Cleaning up build directory...
 
-Done! Press the button on your Teensy to start drawing.
+Done! Connect your Teensy to the Switch and head to the plaza post printer!
 ```
 
 ---
@@ -163,7 +163,8 @@ The sketch's `runMacro()` function handles everything automatically once trigger
 5. Calls `drawImage()` to draw your image
 6. Saves and exits (Minus press)
 
-Press the button wired to GPIO pin 0 to start the macro. The Switch must already be on the Post Printer canvas screen.
+Open the post printer to start drawing a new post. Press sync button on your controller to disconnect it, forcing the controller screen to open. Press the button wired to GPIO pin 0 ONCE to start the macro. 
+The switch will recognize the Teensy as a pro controller, and then run the macro. The default template resets the canvas, grabs the small pen, and moves to 0,0 before starting the drawing pattern. 
 
 ---
 
