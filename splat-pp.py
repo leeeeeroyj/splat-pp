@@ -1,422 +1,355 @@
 #!/usr/bin/env python3
 """
-Convert a 320x120 black and white PNG image to Arduino macro code for Splatoon 3 drawing.
-Compatible with Teensy 4.0 and NSGadget library setup.
-Optimized version with for loops to reduce memory usage.
+splat-pp.py — Splatoon 3 Plaza Post Printer
+Converts a 320x120 B&W PNG into a complete Arduino sketch, compiles it,
+and flashes it to a Teensy 4.0 emulating a Nintendo Switch Pro Controller.
+
+Usage:
+    python splat-pp.py <image.png> [--duration <ms>] [--template <file>]
+
+Output approach — data-driven bytecode:
+    Rather than emitting one function call per step (which overflows the
+    Teensy 4.0's 512 KB ITCM code region for complex images), the tool
+    encodes every move as a compact byte sequence stored in a PROGMEM array.
+    A tiny interpreter loop (~30 lines of C) reads and executes each opcode
+    at runtime. Machine-code footprint: ~200 bytes of code + N bytes of data,
+    regardless of image complexity.
+
+Bytecode format (each instruction is 1-3 bytes):
+    OP_DRAW  0x00        -- press A (stamp current pixel)
+    OP_UP    0x01 <n>    -- move cursor up n steps
+    OP_DOWN  0x02 <n>    -- move cursor down n steps
+    OP_LEFT  0x03 <n>    -- move cursor left n steps
+    OP_RIGHT 0x04 <n>    -- move cursor right n steps
+
+    n is a single byte (1-255). Moves >255 steps are split automatically.
 """
 
-import sys
-import os
 import argparse
-from PIL import Image
-import numpy as np
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
-class PNGToArduinoMacro:
-    def __init__(self, duration=50, debug=False):
-        """
-        Initialize the PNG to Arduino macro converter
-        
-        Args:
-            duration: Duration in milliseconds for button presses and movements
-            debug: Whether to print debug information
-        """
-        self.duration = duration
-        self.debug = debug
-        self.max_width = 320
-        self.max_height = 120
-        
-    def convert_image(self, image_path, output_path=None, function_name="drawImage"):
-        """
-        Convert a PNG image to Arduino macro function
-        
-        Args:
-            image_path: Path to the PNG image
-            output_path: Path to save the Arduino code (optional)
-            function_name: Name for the generated function
-        """
-        try:
-            # Load and process the image
-            img = Image.open(image_path).convert('1')  # Convert to 1-bit B&W
-            width, height = img.size
-            
-            print(f"Processing image: {image_path}")
-            print(f"Image dimensions: {width}x{height}")
-            
-            if width > self.max_width or height > self.max_height:
-                print(f"Warning: Image dimensions exceed {self.max_width}x{self.max_height}")
-                print("Image will be cropped to fit canvas size")
-                
-            # Convert to numpy array (0 = black, 1 = white)
-            pixels = np.array(img)
-            
-            # Generate the Arduino function
-            arduino_code = self._generate_arduino_function(pixels, width, height, function_name)
-            
-            # Determine output path (default to macro/ directory)
-            if output_path is None:
-                base_name = os.path.splitext(os.path.basename(image_path))[0]
-                output_dir = "macro"
-                # Ensure output directory exists
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir, exist_ok=True)
-                output_path = os.path.join(output_dir, f"{base_name}.ino")
-            
-            # Ensure output directory exists for arbitrary output_path
-            out_dir = os.path.dirname(output_path)
-            if out_dir and not os.path.exists(out_dir):
-                os.makedirs(out_dir, exist_ok=True)
+try:
+    from PIL import Image
+    import numpy as np
+except ImportError:
+    print("Missing dependencies. Run: pip install pillow numpy")
+    sys.exit(1)
 
-            # Write to file
-            with open(output_path, 'w') as f:
-                f.write(arduino_code)
-            
-            # Calculate statistics
-            black_pixels = np.sum(pixels == 0)
-            estimated_time = self._estimate_execution_time(pixels, width, height)
-            
-            print(f"Arduino macro saved to: {output_path}")
-            print(f"Function name: {function_name}")
-            print(f"Black pixels to draw: {black_pixels}")
-            print(f"Estimated execution time: {estimated_time:.1f} minutes")
-            
-            if self.debug:
-                self._print_debug_info(pixels, width, height)
-                
-            return True
-            
-        except Exception as e:
-            print(f"Error: {str(e)}")
-            return False
-    
-    def _generate_arduino_function(self, pixels, width, height, function_name):
-        """Generate the complete Arduino function code with optimized for loops"""
-        
-        # Function header and documentation
-        code = f"""// Auto-generated macro function for drawing image
-// Canvas size: {min(width, self.max_width)}x{min(height, self.max_height)}
-// Duration: {self.duration}ms per action
+# ── Board configuration ───────────────────────────────────────────────────────
+FQBN = "teensy:avr:teensy40:usb=nsgamepad"
+MCU  = "TEENSY40"
 
-void {function_name}(unsigned int duration = {self.duration}) {{
+# ── Paths (relative to this script) ──────────────────────────────────────────
+SCRIPT_DIR = Path(__file__).parent
+SKETCH_DIR = SCRIPT_DIR / "sketch"
+BUILD_DIR  = SCRIPT_DIR / "build"
+
+# ── Canvas constants ──────────────────────────────────────────────────────────
+CANVAS_W = 320
+CANVAS_H = 120
+
+# ── Bytecode opcodes ──────────────────────────────────────────────────────────
+OP_DRAW  = 0x00
+OP_UP    = 0x01
+OP_DOWN  = 0x02
+OP_LEFT  = 0x03
+OP_RIGHT = 0x04
+
+
+def load_image(path: str) -> np.ndarray:
+    """Load PNG, resize to 320x120 if needed, threshold to pure B&W.
+    Returns boolean array: True = black pixel (draw), False = white."""
+    img = Image.open(path).convert("L")
+    if img.size != (CANVAS_W, CANVAS_H):
+        print(f"  Resizing {img.size} -> ({CANVAS_W}, {CANVAS_H})")
+        img = img.resize((CANVAS_W, CANVAS_H), Image.LANCZOS)
+    return np.array(img) < 128
+
+
+def plan_moves(black: np.ndarray) -> list:
+    """Snake-scan: left->right on even rows, right->left on odd rows."""
+    pixels = []
+    for row in range(black.shape[0]):
+        cols = np.where(black[row])[0]
+        if len(cols) == 0:
+            continue
+        if row % 2 == 0:
+            pixels.extend((int(c), row) for c in cols)
+        else:
+            pixels.extend((int(c), row) for c in reversed(cols))
+    return pixels
+
+
+def encode_bytecode(pixels: list) -> bytearray:
+    """Encode pixel visit sequence into compact bytecode.
+    Cursor starts at (0,0) matching runMacro()'s holdStick reset."""
+    buf = bytearray()
+    cx, cy = 0, 0
+
+    def emit_move(opcode, steps):
+        while steps > 0:
+            n = min(steps, 255)
+            buf.append(opcode)
+            buf.append(n)
+            steps -= n
+
+    for tx, ty in pixels:
+        dx = tx - cx
+        dy = ty - cy
+        if dy > 0:
+            emit_move(OP_DOWN, dy)
+        elif dy < 0:
+            emit_move(OP_UP, -dy)
+        if dx > 0:
+            emit_move(OP_RIGHT, dx)
+        elif dx < 0:
+            emit_move(OP_LEFT, -dx)
+        buf.append(OP_DRAW)
+        cx, cy = tx, ty
+
+    return buf
+
+
+def count_actions(bytecode: bytearray) -> int:
+    """Count total runtime calls the interpreter will make (for time estimate)."""
+    total = 0
+    i = 0
+    while i < len(bytecode):
+        op = bytecode[i]; i += 1
+        if op == OP_DRAW:
+            total += 1
+        else:
+            n = bytecode[i]; i += 1
+            total += n
+    return total
+
+
+def format_progmem_array(data: bytearray, name: str) -> str:
+    """Format bytes as a C PROGMEM array, 16 bytes per row."""
+    rows = []
+    for i in range(0, len(data), 16):
+        chunk = data[i:i + 16]
+        rows.append("  " + ", ".join(f"0x{b:02X}" for b in chunk))
+    return (
+        f"static const uint8_t {name}[] PROGMEM = {{\n"
+        + ",\n".join(rows)
+        + "\n};"
+    )
+
+
+DRAW_FUNCTION_TEMPLATE = """\
+// Auto-generated by splat-pp.py
+// Source  : {source}
+// Pixels  : {pixel_count:,}
+// Bytecode: {byte_count:,} bytes
+// Duration: {duration}ms per action
+// Est. time: {est_s:.0f}s ({est_min:.1f} min)
+//
+// The image is stored as a PROGMEM data array, not function calls.
+// A small interpreter loop executes each opcode at runtime.
+// This keeps compiled code size tiny regardless of image complexity.
+
+#include <avr/pgmspace.h>
+
+#define OP_DRAW  0x00
+#define OP_UP    0x01
+#define OP_DOWN  0x02
+#define OP_LEFT  0x03
+#define OP_RIGHT 0x04
+
+{array}
+
+void drawImage(unsigned int duration = 25) {{
+  const uint32_t len = sizeof(imageData);
+  for (uint32_t i = 0; i < len; ) {{
+    uint8_t op = pgm_read_byte(&imageData[i++]);
+    if (op == OP_DRAW) {{
+      pressButton(BUTTON_A_INDEX, duration, duration);
+    }} else {{
+      uint8_t n = pgm_read_byte(&imageData[i++]);
+      uint8_t dir;
+      switch (op) {{
+        case OP_UP:    dir = DPAD_UP;    break;
+        case OP_DOWN:  dir = DPAD_DOWN;  break;
+        case OP_LEFT:  dir = DPAD_LEFT;  break;
+        case OP_RIGHT: dir = DPAD_RIGHT; break;
+        default:       dir = DPAD_CENTERED; break;
+      }}
+      for (uint8_t j = 0; j < n; j++) setDPad(dir, duration);
+    }}
+  }}
+}}
 """
-        
-        # Generate optimized drawing commands
-        drawing_commands = self._generate_optimized_pattern(pixels, width, height)
-        
-        # Add the drawing commands to the function
-        for command in drawing_commands:
-            code += f"  {command}\n"
-        
-        # Close the function
-        code += "}\n"
-        
-        return code
-    
-    def _generate_optimized_pattern(self, pixels, width, height):
-        """Generate optimized drawing commands using for loops where possible"""
-        commands = []
-        
-        # Track if we've drawn anything yet (for initial positioning)
-        first_pixel = True
-        current_row = 0
-        current_col = 0
-        
-        for row in range(min(height, self.max_height)):
-            # Get black pixel positions for this row
-            black_positions = []
-            for col in range(min(width, self.max_width)):
-                if pixels[row, col] == 0:  # Black pixel
-                    black_positions.append(col)
-            
-            if not black_positions:
-                if self.debug:
-                    commands.append(f"// Skipping empty row {row}")
-                continue
-            
-            # Determine direction for this row (even = left-to-right, odd = right-to-left)
-            left_to_right = (row % 2 == 0)
-            
-            if self.debug:
-                direction = "left-to-right" if left_to_right else "right-to-left"
-                commands.append(f"// Row {row}: {direction} - {len(black_positions)} pixels")
-            
-            # Sort positions based on direction
-            if not left_to_right:
-                black_positions.reverse()
-            
-            # Handle initial positioning to this row
-            if first_pixel:
-                # Move to starting position
-                if row > 0:
-                    if row == 1:
-                        commands.append("setDPad(DPAD_DOWN, duration);")
-                    else:
-                        commands.append(f"for(int i = 0; i < {row}; i++) setDPad(DPAD_DOWN, duration);")
-                
-                start_col = black_positions[0]
-                if start_col > 0:
-                    if start_col == 1:
-                        commands.append("setDPad(DPAD_RIGHT, duration);")
-                    else:
-                        commands.append(f"for(int i = 0; i < {start_col}; i++) setDPad(DPAD_RIGHT, duration);")
-                
-                current_row = row
-                current_col = start_col
-                first_pixel = False
-            else:
-                # Move down to this row
-                commands.append("setDPad(DPAD_DOWN, duration);")
-                current_row = row
-                
-                # Adjust horizontal position if needed
-                target_col = black_positions[0]
-                if target_col != current_col:
-                    col_diff = target_col - current_col
-                    if col_diff > 0:  # Move right
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_RIGHT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_RIGHT, duration);")
-                    else:  # Move left
-                        col_diff = abs(col_diff)
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_LEFT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_LEFT, duration);")
-                    current_col = target_col
-            
-            # Process pixels in this row, looking for consecutive sequences
-            i = 0
-            while i < len(black_positions):
-                # Find consecutive sequence starting at position i
-                sequence_start = i
-                sequence_end = i
-                
-                # Look for consecutive pixels
-                while (sequence_end + 1 < len(black_positions) and 
-                       black_positions[sequence_end + 1] == black_positions[sequence_end] + 1):
-                    sequence_end += 1
-                
-                sequence_length = sequence_end - sequence_start + 1
-                
-                if sequence_length == 1:
-                    # Single pixel
-                    commands.append("pressButton(BUTTON_A_INDEX, duration, duration);")
-                else:
-                    # Multiple consecutive pixels - use for loop
-                    commands.append(f"for(int i = 0; i < {sequence_length}; i++) {{")
-                    commands.append("  pressButton(BUTTON_A_INDEX, duration, duration);")
-                    if sequence_length > 1:  # Don't move after the last pixel in sequence
-                        commands.append("  if(i < " + str(sequence_length - 1) + ") setDPad(" + 
-                                      ("DPAD_RIGHT" if left_to_right else "DPAD_LEFT") + ", duration);")
-                    commands.append("}")
-                    
-                    # Update current position
-                    if left_to_right:
-                        current_col = black_positions[sequence_end]
-                    else:
-                        current_col = black_positions[sequence_end]
-                
-                # Move to next sequence if there is one
-                if sequence_end + 1 < len(black_positions):
-                    next_pos = black_positions[sequence_end + 1]
-                    col_diff = next_pos - current_col
-                    
-                    if col_diff > 0:  # Move right
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_RIGHT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_RIGHT, duration);")
-                    elif col_diff < 0:  # Move left
-                        col_diff = abs(col_diff)
-                        if col_diff == 1:
-                            commands.append("setDPad(DPAD_LEFT, duration);")
-                        else:
-                            commands.append(f"for(int i = 0; i < {col_diff}; i++) setDPad(DPAD_LEFT, duration);")
-                    
-                    current_col = next_pos
-                
-                i = sequence_end + 1
-        
-        if not commands or all("// " in cmd for cmd in commands):
-            commands.append("// No black pixels found in image")
-        
-        return commands
-    
-    def _estimate_execution_time(self, pixels, width, height):
-        """Estimate the total execution time in minutes"""
-        black_pixels = np.sum(pixels == 0)
-        
-        # More accurate estimate considering the optimizations
-        # Each black pixel takes 2 duration periods (press + release)
-        pixel_time = black_pixels * (self.duration * 2) / 1000.0  # Convert ms to seconds
-        
-        # Estimate movement time (reduced due to for loop optimizations)
-        # Count actual movements needed (this is approximate)
-        movement_count = 0
-        prev_row = -1
-        
-        for row in range(min(height, self.max_height)):
-            has_black = False
-            for col in range(min(width, self.max_width)):
-                if pixels[row, col] == 0:
-                    has_black = True
-                    break
-            
-            if has_black:
-                if prev_row >= 0:
-                    movement_count += 1  # Move down
-                # Add horizontal movements (rough estimate)
-                black_in_row = np.sum(pixels[row, :min(width, self.max_width)] == 0)
-                movement_count += max(0, black_in_row - 1)  # Horizontal moves between pixels
-                prev_row = row
-        
-        movement_time = movement_count * (self.duration / 1000.0)
-        
-        return (pixel_time + movement_time) / 60  # Return in minutes
-    
-    def _print_debug_info(self, pixels, width, height):
-        """Print debug information about the image"""
-        print(f"\nDEBUG INFO:")
-        print(f"Total pixels: {width * height}")
-        print(f"Black pixels: {np.sum(pixels == 0)}")
-        print(f"White pixels: {np.sum(pixels == 1)}")
-        
-        # Count non-empty rows
-        non_empty_rows = 0
-        max_consecutive = 0
-        total_sequences = 0
-        
-        for row in range(min(height, self.max_height)):
-            row_has_black = False
-            consecutive_count = 0
-            current_consecutive = 0
-            
-            for col in range(min(width, self.max_width)):
-                if pixels[row, col] == 0:
-                    row_has_black = True
-                    current_consecutive += 1
-                else:
-                    if current_consecutive > 0:
-                        consecutive_count = max(consecutive_count, current_consecutive)
-                        max_consecutive = max(max_consecutive, current_consecutive)
-                        total_sequences += 1
-                        current_consecutive = 0
-            
-            # Handle case where row ends with black pixels
-            if current_consecutive > 0:
-                consecutive_count = max(consecutive_count, current_consecutive)
-                max_consecutive = max(max_consecutive, current_consecutive)
-                total_sequences += 1
-            
-            if row_has_black:
-                non_empty_rows += 1
-        
-        print(f"Rows with black pixels: {non_empty_rows}/{min(height, self.max_height)}")
-        print(f"Longest consecutive sequence: {max_consecutive} pixels")
-        print(f"Total pixel sequences: {total_sequences}")
-        print(f"Average sequence length: {np.sum(pixels == 0) / max(1, total_sequences):.1f}")
-    
-    def generate_test_pattern(self, pattern_type, output_path=None):
-        """Generate a test pattern and convert it to Arduino macro"""
-        
-        # Create test pattern
-        pixels = np.ones((self.max_height, self.max_width), dtype=np.uint8)  # White background
-        
-        if pattern_type == "checkerboard":
-            # Create checkerboard pattern
-            for row in range(self.max_height):
-                for col in range(self.max_width):
-                    if (row + col) % 2 == 0:
-                        pixels[row, col] = 0  # Black
-        
-        elif pattern_type == "stripes":
-            # Create horizontal stripes
-            for row in range(self.max_height):
-                if row % 4 < 2:  # Every 4 rows, make 2 black
-                    pixels[row, :] = 0
-        
-        elif pattern_type == "border":
-            # Create border - perfect test for for loop optimization
-            pixels[0, :] = 0  # Top
-            pixels[-1, :] = 0  # Bottom
-            pixels[:, 0] = 0  # Left
-            pixels[:, -1] = 0  # Right
-        
-        elif pattern_type == "cross":
-            # Create cross pattern
-            mid_row = self.max_height // 2
-            mid_col = self.max_width // 2
-            pixels[mid_row, :] = 0  # Horizontal line
-            pixels[:, mid_col] = 0  # Vertical line
-        
-        # Save test pattern as PNG
-        test_img = Image.fromarray((pixels * 255).astype(np.uint8))
-        png_path = f"test_{pattern_type}.png"
-        test_img.save(png_path)
-        print(f"Generated test pattern: {png_path}")
-        
-        # Convert to Arduino macro (default to macro/ directory without `_macro` suffix)
-        if output_path is None:
-            output_dir = "macro"
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"test_{pattern_type}.ino")
 
-        # Temporarily create the image file and process it
-        self.convert_image(png_path, output_path, f"draw{pattern_type.capitalize()}")
-        
-        return True
+
+def generate_draw_function(bytecode, pixel_count, duration, source, actions):
+    est_s = (actions * duration * 2) / 1000
+    return DRAW_FUNCTION_TEMPLATE.format(
+        source=source,
+        pixel_count=pixel_count,
+        byte_count=len(bytecode),
+        duration=duration,
+        est_s=est_s,
+        est_min=est_s / 60,
+        array=format_progmem_array(bytecode, "imageData"),
+    )
+
+
+def generate_full_sketch(template_path: str, draw_function: str) -> str:
+    """Read template and replace placeholder with generated drawImage function."""
+    template = Path(template_path).read_text(encoding="utf-8")
+    placeholder_start = "////////////////////////////////////////\n// PASTE THE drawImage FUNCTION BELOW //\n////////////////////////////////////////"
+    placeholder_end = "////////////////////////////////////////"
+
+    start_idx = template.find(placeholder_start)
+    if start_idx == -1:
+        raise ValueError(f"Could not find start marker in template: {template_path}")
+
+    end_idx = template.find(placeholder_end, start_idx + len(placeholder_start))
+    if end_idx == -1:
+        raise ValueError(f"Could not find end marker in template: {template_path}")
+
+    before = template[:start_idx + len(placeholder_start)]
+    after = template[end_idx:]
+
+    return before + "\n" + draw_function + "\n" + after
+
+
+def compile_sketch(sketch_dir: Path) -> Path:
+    """Compile the sketch with arduino-cli. Returns path to the hex file."""
+    print(f"\nCompiling {sketch_dir.name}...")
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [
+            "arduino-cli", "compile",
+            "--fqbn", FQBN,
+            "--build-path", str(BUILD_DIR),
+            str(sketch_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print("Compile failed:\n")
+        print(result.stderr)
+        sys.exit(1)
+
+    # Print size line from stdout
+    for line in result.stdout.splitlines():
+        if "Sketch uses" in line or "Global variables" in line:
+            print(f"  {line.strip()}")
+
+    hex_file = BUILD_DIR / f"{sketch_dir.name}.ino.hex"
+    if not hex_file.exists():
+        print(f"Error: expected hex file not found: {hex_file}")
+        sys.exit(1)
+
+    print("  Compile successful.")
+    return hex_file
+
+
+def flash_teensy(hex_file: Path):
+    """Prompt user then flash hex to Teensy."""
+    print("\n─────────────────────────────────────────")
+    print("  Ready to flash.")
+    print("  Press the button on your Teensy, then")
+    input("  press Enter here to flash... ")
+    print("─────────────────────────────────────────")
+
+    result = subprocess.run(
+        [
+            "teensy_loader_cli",
+            f"--mcu={MCU}",
+            "-w", "-v",
+            str(hex_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    print(result.stdout)
+    if result.returncode != 0:
+        print("Flash failed:\n")
+        print(result.stderr)
+        sys.exit(1)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Convert a B&W PNG into a Splatoon Post Printer sketch, compile, and flash."
+    )
+    p.add_argument("image", help="Path to source PNG")
+    p.add_argument("--duration", type=int, default=25,
+                   help="ms per action (default 25, range 20-200)")
+    p.add_argument("--template", default="sketch.txt",
+                   help="Path to Arduino sketch template (default: sketch.txt)")
+    return p.parse_args()
+
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Convert 320x120 black and white PNG to Arduino macro for Splatoon 3'
+    args = parse_args()
+
+    if not (20 <= args.duration <= 200):
+        print(f"Error: --duration must be 20-200 ms (got {args.duration})")
+        sys.exit(1)
+
+    img_path = Path(args.image)
+    if not img_path.exists():
+        print(f"Error: file not found: {img_path}")
+        sys.exit(1)
+
+    template_path = Path(args.template)
+    if not template_path.exists():
+        print(f"Error: template not found: {template_path}")
+        sys.exit(1)
+
+    # ── Convert ───────────────────────────────────────────────────────────────
+    print(f"Loading image: {img_path}")
+    black = load_image(str(img_path))
+    pixel_count = int(black.sum())
+    print(f"  Black pixels: {pixel_count:,} / {CANVAS_W * CANVAS_H:,}")
+
+    print("Planning snake-scan move sequence...")
+    pixels = plan_moves(black)
+    print(f"  Draw operations: {len(pixels):,}")
+
+    print("Encoding bytecode...")
+    bytecode = encode_bytecode(pixels)
+    actions = count_actions(bytecode)
+    est_s = (actions * args.duration * 2) / 1000
+    print(f"  Bytecode size : {len(bytecode):,} bytes")
+    print(f"  Est. draw time: {est_s:.0f}s ({est_s/60:.1f} min)")
+
+    # ── Generate sketch ───────────────────────────────────────────────────────
+    print("Merging with template...")
+    draw_function = generate_draw_function(
+        bytecode, pixel_count, args.duration, img_path.name, actions
     )
-    
-    parser.add_argument('input_image', nargs='?', help='Path to input PNG image')
-    parser.add_argument('output_file', nargs='?', help='Path to output Arduino file (.ino)')
-    parser.add_argument('--duration', type=int, default=50,
-                       help='Duration in milliseconds for button presses (default: 50)')
-    parser.add_argument('--function-name', default='drawImage',
-                       help='Name for the generated Arduino function (default: drawImage)')
-    parser.add_argument('--debug', action='store_true',
-                       help='Print debug information')
-    parser.add_argument('--test-pattern', 
-                       choices=['checkerboard', 'stripes', 'border', 'cross'],
-                       help='Generate a test pattern instead of processing input image')
-    
-    args = parser.parse_args()
-    
-    # Create converter
-    converter = PNGToArduinoMacro(duration=args.duration, debug=args.debug)
-    
-    if args.test_pattern:
-        # Generate test pattern (default to macro/ directory)
-        if args.output_file:
-            output_file = args.output_file
-        else:
-            output_dir = "macro"
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"test_{args.test_pattern}.ino")
-        converter.generate_test_pattern(args.test_pattern, output_file)
-    elif args.input_image:
-        # Process input image
-        if not os.path.exists(args.input_image):
-            print(f"Error: Input image '{args.input_image}' not found")
-            return 1
-        
-        converter.convert_image(args.input_image, args.output_file, args.function_name)
-    else:
-        # Show usage
-        print("Usage examples:")
-        print("  python splat-pp.py image.png")
-        print("  python splat-pp.py image.png output_macro.ino")
-        print("  python splat-pp.py --test-pattern border")
-        print("  python splat-pp.py image.png --duration 100 --function-name drawMyImage")
-        print("\nRun with --help for more options")
-        return 1
-    
-    return 0
+    full_sketch = generate_full_sketch(str(template_path), draw_function)
+
+    base_name = img_path.stem
+    sketch_dir = SKETCH_DIR / base_name
+    sketch_dir.mkdir(parents=True, exist_ok=True)
+    out_path = sketch_dir / f"{base_name}.ino"
+    out_path.write_text(full_sketch, encoding="utf-8")
+    print(f"  Written to: {out_path}")
+
+    # ── Compile ───────────────────────────────────────────────────────────────
+    hex_file = compile_sketch(sketch_dir)
+
+    # ── Flash ─────────────────────────────────────────────────────────────────
+    flash_teensy(hex_file)
+
+    # ── Clean up build dir ────────────────────────────────────────────────────
+    print("\nCleaning up build directory...")
+    shutil.rmtree(BUILD_DIR)
+
+    print("\nDone! Connect your Teensy to the Switch and head to the plaza post printer!")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
