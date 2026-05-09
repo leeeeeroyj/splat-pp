@@ -43,7 +43,7 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 ### Software
 
 - Python 3.11+
-- [Arduino IDE](https://www.arduino.cc/en/software) 1.8.x with [Teensyduino](https://www.pjrc.com/teensy/td_download.html)
+- [Arduino IDE](https://www.arduino.cc/en/software) 2.x.x with [Teensyduino](https://www.pjrc.com/teensy/td_download.html)
 - [Arduino NS Gamepad for Teensy](https://github.com/gdsports/NSGadget_Teensy)
 - Python packages:
 
