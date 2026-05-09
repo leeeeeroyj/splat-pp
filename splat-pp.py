@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 splat-pp.py — Splatoon 3 Plaza Post Printer
-Converts a 320x120 B&W PNG into an Arduino drawImage() function
-for a Teensy 4.0 emulating a Nintendo Switch Pro Controller.
+Converts a 320x120 B&W PNG into a complete Arduino sketch, compiles it,
+and flashes it to a Teensy 4.0 emulating a Nintendo Switch Pro Controller.
 
 Usage:
-    python splat-pp.py <image.png> [--duration <ms>] [--output <file.ino>] [--preview]
+    python splat-pp.py <image.png> [--duration <ms>] [--template <file>]
 
 Output approach — data-driven bytecode:
     Rather than emitting one function call per step (which overflows the
@@ -26,6 +26,8 @@ Bytecode format (each instruction is 1-3 bytes):
 """
 
 import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,11 +38,20 @@ except ImportError:
     print("Missing dependencies. Run: pip install pillow numpy")
     sys.exit(1)
 
-# Canvas constants
+# ── Board configuration ───────────────────────────────────────────────────────
+FQBN = "teensy:avr:teensy40:usb=nsgamepad"
+MCU  = "TEENSY40"
+
+# ── Paths (relative to this script) ──────────────────────────────────────────
+SCRIPT_DIR = Path(__file__).parent
+SKETCH_DIR = SCRIPT_DIR / "sketch"
+BUILD_DIR  = SCRIPT_DIR / "build"
+
+# ── Canvas constants ──────────────────────────────────────────────────────────
 CANVAS_W = 320
 CANVAS_H = 120
 
-# Bytecode opcodes
+# ── Bytecode opcodes ──────────────────────────────────────────────────────────
 OP_DRAW  = 0x00
 OP_UP    = 0x01
 OP_DOWN  = 0x02
@@ -56,20 +67,6 @@ def load_image(path: str) -> np.ndarray:
         print(f"  Resizing {img.size} -> ({CANVAS_W}, {CANVAS_H})")
         img = img.resize((CANVAS_W, CANVAS_H), Image.LANCZOS)
     return np.array(img) < 128
-
-
-def ascii_preview(black: np.ndarray, width: int = 80) -> str:
-    scale_x = black.shape[1] / width
-    scale_y = black.shape[0] / (width * (CANVAS_H / CANVAS_W) * 0.5)
-    rows = []
-    for rf in range(int(black.shape[0] / scale_y)):
-        ri = int(rf * scale_y)
-        rows.append("".join(
-            "X" if black[ri, int(cf * scale_x)] else " "
-            for cf in range(width)
-        ))
-    border = "+" + "-" * width + "+"
-    return "\n".join([border] + [f"|{r}|" for r in rows] + [border])
 
 
 def plan_moves(black: np.ndarray) -> list:
@@ -102,7 +99,6 @@ def encode_bytecode(pixels: list) -> bytearray:
     for tx, ty in pixels:
         dx = tx - cx
         dy = ty - cy
-        # Vertical first, then horizontal
         if dy > 0:
             emit_move(OP_DOWN, dy)
         elif dy < 0:
@@ -188,6 +184,7 @@ void drawImage(unsigned int duration = 25) {{
 }}
 """
 
+
 def generate_draw_function(bytecode, pixel_count, duration, source, actions):
     est_s = (actions * duration * 2) / 1000
     return DRAW_FUNCTION_TEMPLATE.format(
@@ -206,36 +203,91 @@ def generate_full_sketch(template_path: str, draw_function: str) -> str:
     template = Path(template_path).read_text(encoding="utf-8")
     placeholder_start = "////////////////////////////////////////\n// PASTE THE drawImage FUNCTION BELOW //\n////////////////////////////////////////"
     placeholder_end = "////////////////////////////////////////"
-    
+
     start_idx = template.find(placeholder_start)
     if start_idx == -1:
         raise ValueError(f"Could not find start marker in template: {template_path}")
-    
+
     end_idx = template.find(placeholder_end, start_idx + len(placeholder_start))
     if end_idx == -1:
         raise ValueError(f"Could not find end marker in template: {template_path}")
-    
+
     before = template[:start_idx + len(placeholder_start)]
     after = template[end_idx:]
-    
+
     return before + "\n" + draw_function + "\n" + after
+
+
+def compile_sketch(sketch_dir: Path) -> Path:
+    """Compile the sketch with arduino-cli. Returns path to the hex file."""
+    print(f"\nCompiling {sketch_dir.name}...")
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [
+            "arduino-cli", "compile",
+            "--fqbn", FQBN,
+            "--build-path", str(BUILD_DIR),
+            str(sketch_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print("Compile failed:\n")
+        print(result.stderr)
+        sys.exit(1)
+
+    # Print size line from stdout
+    for line in result.stdout.splitlines():
+        if "Sketch uses" in line or "Global variables" in line:
+            print(f"  {line.strip()}")
+
+    hex_file = BUILD_DIR / f"{sketch_dir.name}.ino.hex"
+    if not hex_file.exists():
+        print(f"Error: expected hex file not found: {hex_file}")
+        sys.exit(1)
+
+    print("  Compile successful.")
+    return hex_file
+
+
+def flash_teensy(hex_file: Path):
+    """Prompt user then flash hex to Teensy."""
+    print("\n─────────────────────────────────────────")
+    print("  Ready to flash.")
+    print("  Press the button on your Teensy, then")
+    input("  press Enter here to flash... ")
+    print("─────────────────────────────────────────")
+
+    result = subprocess.run(
+        [
+            "teensy_loader_cli",
+            f"--mcu={MCU}",
+            "-w", "-v",
+            str(hex_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    print(result.stdout)
+    if result.returncode != 0:
+        print("Flash failed:\n")
+        print(result.stderr)
+        sys.exit(1)
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Convert a 320x120 B&W PNG into a Splatoon Post Printer Arduino sketch."
+        description="Convert a B&W PNG into a Splatoon Post Printer sketch, compile, and flash."
     )
     p.add_argument("image", help="Path to source PNG")
     p.add_argument("--duration", type=int, default=25,
                    help="ms per action (default 25, range 20-200)")
     p.add_argument("--template", default="sketch.txt",
                    help="Path to Arduino sketch template (default: sketch.txt)")
-    p.add_argument("--full", action="store_true",
-                   help="Generate complete sketch by merging with template")
-    p.add_argument("--output", default=None,
-                   help="Output filename (default: <input_name>.ino in sketch/ directory)")
-    p.add_argument("--preview", action="store_true",
-                   help="Print ASCII preview of the image")
     return p.parse_args()
 
 
@@ -251,15 +303,16 @@ def main():
         print(f"Error: file not found: {img_path}")
         sys.exit(1)
 
+    template_path = Path(args.template)
+    if not template_path.exists():
+        print(f"Error: template not found: {template_path}")
+        sys.exit(1)
+
+    # ── Convert ───────────────────────────────────────────────────────────────
     print(f"Loading image: {img_path}")
     black = load_image(str(img_path))
     pixel_count = int(black.sum())
     print(f"  Black pixels: {pixel_count:,} / {CANVAS_W * CANVAS_H:,}")
-
-    if args.preview:
-        print("\nASCII Preview:")
-        print(ascii_preview(black))
-        print()
 
     print("Planning snake-scan move sequence...")
     pixels = plan_moves(black)
@@ -272,30 +325,31 @@ def main():
     print(f"  Bytecode size : {len(bytecode):,} bytes")
     print(f"  Est. draw time: {est_s:.0f}s ({est_s/60:.1f} min)")
 
-    draw_function = generate_draw_function(bytecode, pixel_count, args.duration, img_path.name, actions)
+    # ── Generate sketch ───────────────────────────────────────────────────────
+    print("Merging with template...")
+    draw_function = generate_draw_function(
+        bytecode, pixel_count, args.duration, img_path.name, actions
+    )
+    full_sketch = generate_full_sketch(str(template_path), draw_function)
 
-    if args.full:
-        print("Merging with template...")
-        full_sketch = generate_full_sketch(args.template, draw_function)
-        output = full_sketch
-    else:
-        output = draw_function
+    base_name = img_path.stem
+    sketch_dir = SKETCH_DIR / base_name
+    sketch_dir.mkdir(parents=True, exist_ok=True)
+    out_path = sketch_dir / f"{base_name}.ino"
+    out_path.write_text(full_sketch, encoding="utf-8")
+    print(f"  Written to: {out_path}")
 
-    if args.output:
-        out_path = Path(args.output)
-    else:
-        base_name = img_path.stem
-        out_path = Path("sketch") / f"{base_name}.ino"
-    
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(output, encoding="utf-8")
-    print(f"\nDone! Written to: {out_path}")
-    
-    if args.full:
-        print(f"\nFlash to your Teensy 4.0 and press the trigger button")
-    else:
-        print(f"\nUse --full to generate complete sketch with template merged")
+    # ── Compile ───────────────────────────────────────────────────────────────
+    hex_file = compile_sketch(sketch_dir)
 
+    # ── Flash ─────────────────────────────────────────────────────────────────
+    flash_teensy(hex_file)
+
+    # ── Clean up build dir ────────────────────────────────────────────────────
+    print("\nCleaning up build directory...")
+    shutil.rmtree(BUILD_DIR)
+
+    print("\nDone! Connect your Teensy to the Switch and head to the plaza post printer!")
 
 if __name__ == "__main__":
     main()

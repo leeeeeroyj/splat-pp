@@ -42,10 +42,10 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 
 ### Software
 
+- Ubuntu/Debian Linux (the setup script targets this environment)
 - Python 3.11+
-- [Arduino IDE](https://www.arduino.cc/en/software) 2.x.x with [Teensyduino](https://www.pjrc.com/teensy/td_download.html)
-- [Arduino NS Gamepad for Teensy](https://github.com/gdsports/NSGadget_Teensy)
-- Python packages:
+- Git
+- Python packages: `pillow`, `numpy`
 
 ```
 pip install pillow numpy
@@ -53,65 +53,90 @@ pip install pillow numpy
 
 ---
 
+## Setup
+
+Environment setup is handled by `setup-nsgadget.sh`. This script installs and configures everything needed to compile and flash sketches from the command line — no Arduino IDE required.
+
+### What the script does
+
+1. Installs `arduino-cli` if not already present
+2. Configures `arduino-cli` to use `~/Arduino` as its data directory
+3. Installs the Teensy 4.0 core (v1.60.0)
+4. Backs up the stock core before modifying it
+5. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) — an updated fork of the NS Gamepad library
+6. Installs the `Bounce2` library
+7. Patches the Teensy core to support the `USB_NSGAMEPAD` USB type:
+   - Adds `usb=nsgamepad` option to `boards.txt`
+   - Fixes `TEENSYDUINO` version flag for compatibility with core 1.60.0
+   - Upgrades C++ standard to C++17
+   - Copies NSGamepad USB descriptor and driver files into the core
+   - Patches `WProgram.h`, `Print.cpp`, and `yield.cpp` for NSGamepad compatibility
+8. Installs Teensy udev rules (allows flashing without `sudo`)
+9. Installs `teensy_loader_cli`
+
+### Running the setup script
+
+```bash
+chmod +x setup-nsgadget.sh
+./setup-nsgadget.sh
+```
+
+The script is safe to run multiple times — it skips steps that are already complete.
+
+> **Note:** After the script runs for the first time, log out and back in (or reboot) for the udev rules to take effect before flashing.
+
+---
+
 ## Usage
 
 ```
-python splat-pp.py <image.png> [options]
+python splat-pp.py <image.png> [--duration <ms>] [--template <file>]
 ```
-
-### Arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `image.png` | — | Source image (PNG, ideally 320×120) |
 | `--duration` | `25` | Milliseconds per action (range: 20–200) |
 | `--template` | `sketch.txt` | Path to Arduino sketch template |
-| `--full` | off | Generate complete sketch (with template merged) |
-| `--output` | auto | Output filename (default: `<input>.ino` in `sketch/`) |
-| `--preview` | off | Print an ASCII preview of the thresholded image |
 
-### Output modes
+The script handles everything in one run:
 
-**Function only** (default): Generates just the `drawImage()` function and bytecode array. Useful for manual integration or custom templates.
-
-```
-python splat-pp.py mypost.png --output drawImage.ino
-```
-
-**Full sketch** (`--full`): Merges the generated `drawImage()` function with the template file to produce a complete Arduino sketch ready to flash.
-
-```
-python splat-pp.py mypost.png --full
-```
-
-Output: `sketch/mypost.ino`
+1. Converts the image to a bytecode sequence
+2. Merges it with the sketch template
+3. Compiles the sketch with `arduino-cli`
+4. Prompts you to press the button on your Teensy, then flashes it
 
 ### Example
 
-```
-python splat-pp.py img/godHead.png --full --preview
+```bash
+python splat-pp.py img/godHead.png
 ```
 
 Output:
 ```
 Loading image: img/godHead.png
   Black pixels: 22,750 / 38,400
-
-ASCII Preview:
-+--------------------------------------------------------------------------------+
-|   XX   XXXX  XX  ...                                                           |
-+--------------------------------------------------------------------------------+
-
 Planning snake-scan move sequence...
   Draw operations: 22,750
 Encoding bytecode...
   Bytecode size : 68,318 bytes
   Est. draw time: 3056s (50.9 min)
 Merging with template...
+  Written to: sketch/godHead/godHead.ino
 
-Done! Written to: sketch/godHead.ino
+Compiling godHead...
+  Sketch uses 45404 bytes (2%) of program storage space. Maximum is 2031616 bytes.
+  Compile successful.
 
-Flash to your Teensy 4.0 and press the trigger button
+─────────────────────────────────────────
+  Ready to flash.
+  Press the button on your Teensy, then
+  press Enter here to flash...
+─────────────────────────────────────────
+
+Cleaning up build directory...
+
+Done! Press the button on your Teensy to start drawing.
 ```
 
 ---
@@ -127,17 +152,9 @@ For best results, prepare your image at exactly 320×120 in an image editor and 
 
 ---
 
-## Integration with the Arduino sketch
+## How the sketch works
 
-Use `--full` to generate a complete sketch that includes the template and the generated `drawImage()` function merged together:
-
-```
-python splat-pp.py mypost.png --full
-```
-
-Output: `sketch/mypost.ino` — ready to compile and flash to your Teensy 4.0.
-
-The sketch's `runMacro()` function handles everything else automatically:
+The sketch's `runMacro()` function handles everything automatically once triggered:
 
 1. Registers the controller with the Switch (3× A press)
 2. Sets the smallest pen size (2× L press)
@@ -171,6 +188,14 @@ Draw time scales with the number of black pixels in your image. A fully filled 3
 An earlier approach generated one Arduino function call per drawing step. For complex images this produced 60,000+ lines of C, which overflowed the Teensy 4.0's 512 KB ITCM (tightly-coupled instruction memory) region and either failed to compile or took many minutes to do so.
 
 Storing the moves as a `PROGMEM` byte array sidesteps this entirely. Data lives in regular flash (2 MB on the Teensy 4.0); only the ~30-line interpreter loop occupies ITCM. Compile times drop to a few seconds regardless of image complexity.
+
+### Why arduino-cli instead of the Arduino IDE?
+
+`arduino-cli` allows compiling and flashing entirely from the command line, making it easy to integrate into scripts and automated workflows. The `setup-nsgadget.sh` script patches the Teensy 1.60.0 core to support the `USB_NSGAMEPAD` USB type required by NSGadget_Teensy, which the IDE's board manager GUI would normally handle via the USB Type dropdown menu.
+
+### NSGadget_Teensy and the Teensy core
+
+NSGadget_Teensy is not a standard Arduino library — it works by patching USB descriptor and driver files directly into the Teensy core. The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork, which includes compatibility updates through Teensyduino 1.56. Additional patches are applied by the script for compatibility with Teensyduino 1.60.0.
 
 ### Cursor coordinate system
 
