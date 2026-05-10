@@ -39,6 +39,8 @@ except ImportError:
     sys.exit(1)
 
 # ── Board configuration ───────────────────────────────────────────────────────
+# USB type: nsgamepad = Nintendo Switch Gamepad (Hori controller emulation)
+# This requires the NSGadget_Teensy patches installed by setup-nsgadget.sh
 FQBN = "teensy:avr:teensy40:usb=nsgamepad"
 MCU  = "TEENSY40"
 

@@ -62,17 +62,14 @@ Environment setup is handled by `setup-nsgadget.sh`. This script installs and co
 1. Installs `arduino-cli` if not already present
 2. Configures `arduino-cli` to use `~/Arduino` as its data directory
 3. Installs the Teensy 4.0 core (v1.60.0)
-4. Backs up the stock core before modifying it
-5. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) > an updated fork of the NS Gamepad library (Thanks, dude!)
+4. Backs up the stock Teensy core
+5. Clones the dmadison/NSGadget_Teensy fork (provides USB descriptors for Switch compatibility)
 6. Installs the `Bounce2` library
-7. Patches the Teensy core to support the `USB_NSGAMEPAD` USB type:
-   - Adds `usb=nsgamepad` option to `boards.txt`
-   - Fixes `TEENSYDUINO` version flag for compatibility with core 1.60.0
-   - Upgrades C++ standard to C++17
-   - Copies NSGamepad USB descriptor and driver files into the core
-   - Patches `WProgram.h`, `Print.cpp`, and `yield.cpp` for NSGamepad compatibility
-8. Installs Teensy udev rules (allows flashing without `sudo`)
-9. Installs `teensy_loader_cli`
+7. Patches `boards.txt` to add the `usb=nsgamepad` option
+8. Copies NSGadget USB descriptor files to the Teensy core
+9. Patches `WProgram.h`, `Print.cpp`, and `yield.cpp` for NSGadget compatibility
+10. Installs Teensy udev rules (allows flashing without `sudo`)
+11. Installs `teensy_loader_cli`
 
 ### Running the setup script
 
@@ -197,7 +194,15 @@ Storing the moves as a `PROGMEM` byte array sidesteps this entirely. Data lives 
 
 ### NSGadget_Teensy and the Teensy core
 
-NSGadget_Teensy is not a standard Arduino library. It works by patching USB descriptor and driver files directly into the Teensy core. The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork, which includes compatibility updates through Teensyduino 1.56. Additional patches are applied by the script for compatibility with Teensyduino 1.60.0.
+NSGadget_Teensy is not a standard Arduino library. It works by patching USB descriptor and driver files directly into the Teensy core to make the device report as a Nintendo Switch Pro Controller (Hori compatibility). The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork.
+
+The setup script performs critical patching:
+
+- **boards.txt**: Adds the `usb=nsgamepad` USB type option for teensy40
+- **USB descriptors**: Copies `usb_nsgamepad.c/h` files that implement Pro Controller HID reports
+- **Core files**: Patches `WProgram.h`, `Print.cpp`, and `yield.cpp` to work with NSGadget USB mode (disables Serial in NSGadget mode)
+
+This combination allows the Teensy to appear as a genuine Nintendo Switch Pro Controller to the Switch, while still sending proper button/axis HID reports.
 
 ### Cursor coordinate system
 

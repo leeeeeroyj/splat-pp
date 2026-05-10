@@ -1,3 +1,6 @@
+.vscode/
+
+__pycache__/
+
 img/*
 *.ino
-__pycache__/
