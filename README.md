@@ -83,12 +83,6 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 
 > **Note:** After running the script for the first time, log out and back in (or reboot) for the udev rules to take effect.
 
-> **Note:** If you previously had a `~/Arduino/packages/teensy/hardware/avr/1.60.0.stock-backup` directory from an old setup attempt, rename it with a hyphen instead of a dot — arduino-cli chokes on the dot in the directory name:
-> ```bash
-> mv ~/Arduino/packages/teensy/hardware/avr/1.60.0.stock-backup \
->    ~/Arduino/packages/teensy/hardware/avr/1.60.0-stock-backup
-> ```
-
 ---
 
 ## Usage
@@ -109,6 +103,16 @@ The script handles everything in one run:
 2. Merges it with the sketch template
 3. Compiles the sketch with `arduino-cli`
 4. Prompts you to put the Teensy into flash mode, then flashes it
+
+The default sketch.txt template can be copied and adjusted as needed:
+
+   - Define Controller Settings
+   - Registers the controller with the Switch (3× A press)
+   - Select the smallest pen size (2× L press)
+   - Clear the canvas (L-stick click)
+   - Move the cursor to the top-left corner (analog stick held for 7 seconds)
+   - Bytecode sequence
+   - Save and exit (Minus press)
 
 ### Example
 
@@ -192,7 +196,7 @@ Draw time scales with the number of black pixels. A fully filled 320×120 canvas
 
 ### The missing `usb_nsgamepad_configure()` call
 
-The core issue that prevented button presses from registering — even when the controller was correctly recognised — was a missing line in `usb.c`. The Teensy core calls each USB device's configure function when the USB host completes enumeration. This sets up the transmit endpoint and DMA buffers. Every other USB type (joystick, keyboard, mouse, etc.) had its configure call registered in `usb.c`. NSGadget's `usb_nsgamepad_configure()` was never added. Without it, `usb_nsgamepad_send()` exits immediately on every call because `usb_configuration` is never set, so every HID report is silently dropped. The setup script now patches this.
+The core issue that prevented button presses from registering (even when the controller was correctly recognized) was a missing line in `usb.c`. The Teensy core calls each USB device's configure function when the USB host completes enumeration. This sets up the transmit endpoint and DMA buffers. Every other USB type (joystick, keyboard, mouse, etc.) had its configure call registered in `usb.c`. NSGadget's `usb_nsgamepad_configure()` was never added. Without it, `usb_nsgamepad_send()` exits immediately on every call because `usb_configuration` is never set, so every HID report is silently dropped. The setup script patches this.
 
 ### Why `NSGamepad.write()` not `NSGamepad.loop()`
 
