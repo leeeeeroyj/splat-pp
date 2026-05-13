@@ -221,8 +221,21 @@ def generate_full_sketch(template_path: str, draw_function: str) -> str:
 
 
 def compile_sketch(sketch_dir: Path) -> Path:
-    """Compile the sketch with arduino-cli. Returns path to the hex file."""
+    """Compile the sketch with arduino-cli. Returns path to the hex file.
+
+    The build directory is always wiped before compiling so arduino-cli's
+    precompiled-header cache (build/pch/Arduino.h) is never stale.
+    C++14/17 compatibility is handled by setup-nsgadget.sh patching
+    IntervalTimer.h in the Teensy core directly.
+    """
     print(f"\nCompiling {sketch_dir.name}...")
+
+    # Always wipe the build dir before compiling.
+    # arduino-cli caches a precompiled Arduino.h in build/pch/. If a prior
+    # failed build left that cache behind, compiler flag changes (like the
+    # C++17 override below) are silently ignored and the old errors repeat.
+    if BUILD_DIR.exists():
+        shutil.rmtree(BUILD_DIR)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(

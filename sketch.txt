@@ -1,78 +1,97 @@
-#include <Bounce2.h>
-#include <NSGamepad.h>
+// Splatoon 3 Post Printer – Teensy 4.0 sketch template
+//
+// USB type: NS Switch Controller (usb=nsgamepad → USB_NSGAMEPAD)
+// NSGamepad is the usb_nsgamepad_class singleton from usb_nsgamepad.h,
+// instantiated in usb_inst.cpp. No separate library needed.
+//
+// IMPORTANT: Use NSGamepad.write() to send the report immediately.
+// NSGamepad.loop() only sends if ≥7ms has elapsed since the last write,
+// so it will silently drop sends that happen too quickly after begin()
+// or after each other. write() always sends unconditionally.
 
-// Setup GPIO pin to trigger a macro with a button press
+#include <Bounce2.h>
+
+// ─── GPIO ─────────────────────────────────────────────────────────────────────
 #define BUTTON_PIN 0
 Bounce triggerBtn = Bounce();
 bool macroRunning = false;
 
-// NSGamepad button indices
-#define BUTTON_Y_INDEX 0        // Button Y
-#define BUTTON_B_INDEX 1        // Button B 
-#define BUTTON_A_INDEX 2        // Button A
-#define BUTTON_X_INDEX 3        // Button X
-#define BUTTON_L_INDEX 4        // Left shoulder button L
-#define BUTTON_R_INDEX 5        // Right shoulder button R
-#define BUTTON_ZL_INDEX 6       // Left trigger ZL
-#define BUTTON_ZR_INDEX 7       // Right trigger ZR
-#define BUTTON_MINUS_INDEX 8    // Minus button
-#define BUTTON_PLUS_INDEX 9     // Plus button
-#define BUTTON_LCLICK_INDEX 10  // Left stick click
-#define BUTTON_RCLICK_INDEX 11  // Right stick click
-#define BUTTON_HOME_INDEX 12    // Home button
-#define BUTTON_CAPTURE_INDEX 13 // Capture button
+// ─── Button indices – MUST match NSButtons enum in usb_nsgamepad.h ────────────
+// enum NSButtons { NSButton_Y=0, NSButton_B, NSButton_A, NSButton_X,
+//   NSButton_LeftTrigger, NSButton_RightTrigger, NSButton_LeftThrottle,
+//   NSButton_RightThrottle, NSButton_Minus, NSButton_Plus,
+//   NSButton_LeftStick, NSButton_RightStick, NSButton_Home, NSButton_Capture }
+#define BUTTON_Y_INDEX        0
+#define BUTTON_B_INDEX        1
+#define BUTTON_A_INDEX        2
+#define BUTTON_X_INDEX        3
+#define BUTTON_L_INDEX        4   // LeftTrigger  (L shoulder)
+#define BUTTON_R_INDEX        5   // RightTrigger (R shoulder)
+#define BUTTON_ZL_INDEX       6   // LeftThrottle
+#define BUTTON_ZR_INDEX       7   // RightThrottle
+#define BUTTON_MINUS_INDEX    8
+#define BUTTON_PLUS_INDEX     9
+#define BUTTON_LCLICK_INDEX   10  // LeftStick click
+#define BUTTON_RCLICK_INDEX   11  // RightStick click
+#define BUTTON_HOME_INDEX     12
+#define BUTTON_CAPTURE_INDEX  13
 
-// DPad direction values 
-#define DPAD_CENTERED 0xF
-#define DPAD_UP 0
-#define DPAD_UP_RIGHT 1
-#define DPAD_RIGHT 2
+// ─── D-pad values – match NSGAMEPAD_DPAD_* in usb_nsgamepad.h ─────────────────
+#define DPAD_CENTERED   0xF
+#define DPAD_UP         0
+#define DPAD_UP_RIGHT   1
+#define DPAD_RIGHT      2
 #define DPAD_DOWN_RIGHT 3
-#define DPAD_DOWN 4
-#define DPAD_DOWN_LEFT 5
-#define DPAD_LEFT 6
-#define DPAD_UP_LEFT 7
+#define DPAD_DOWN       4
+#define DPAD_DOWN_LEFT  5
+#define DPAD_LEFT       6
+#define DPAD_UP_LEFT    7
 
+// ─── setup ────────────────────────────────────────────────────────────────────
 void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   triggerBtn.attach(BUTTON_PIN);
-  triggerBtn.interval(10); // Debounce 10ms
-  NSGamepad.begin();       // Initialize NSGamepad
+  triggerBtn.interval(10);
+  NSGamepad.begin();  // resets report, sends neutral state, sets startMillis
+  delay(2000);        // give the Switch time to recognise the controller
 }
 
-// Helper: Press and release NSGamepad button by index
-void pressButton(uint8_t index, unsigned int pressDuration = 500, unsigned int releaseDuration = 500) {
+// ─── pressButton ──────────────────────────────────────────────────────────────
+// Presses a button, sends immediately via write(), waits, releases, sends again.
+void pressButton(uint8_t index,
+                 unsigned int pressDuration   = 500,
+                 unsigned int releaseDuration = 500) {
   NSGamepad.press(index);
-  NSGamepad.loop();
+  NSGamepad.write();          // send immediately – do NOT use loop() here
   delay(pressDuration);
   NSGamepad.release(index);
-  NSGamepad.loop();
+  NSGamepad.write();          // send release immediately
   delay(releaseDuration);
 }
 
-// Helper: Set DPad direction then return to center
+// ─── setDPad ──────────────────────────────────────────────────────────────────
+// Taps the D-pad in a direction then recentres.
 void setDPad(uint8_t direction, unsigned int duration = 500) {
   NSGamepad.dPad(direction);
-  NSGamepad.loop();
+  NSGamepad.write();
   delay(duration);
   NSGamepad.dPad(DPAD_CENTERED);
-  NSGamepad.loop();
+  NSGamepad.write();
   delay(duration);
 }
 
-// Helper: Hold left stick in a direction
+// ─── holdStick ────────────────────────────────────────────────────────────────
+// Holds the left analog stick at (x, y) for duration ms then releases.
+// x, y: signed -128..127; converted to 0..255 for the HID report.
 void holdStick(int8_t x, int8_t y, unsigned int duration) {
-  // Convert -128..127 to 0..255 for NSGadget
   NSGamepad.leftXAxis((uint8_t)(x + 128));
   NSGamepad.leftYAxis((uint8_t)(y + 128));
-  NSGamepad.loop();
+  NSGamepad.write();
   delay(duration);
-  
-  // Reset to center (128 = neutral position)
   NSGamepad.leftXAxis(128);
   NSGamepad.leftYAxis(128);
-  NSGamepad.loop();
-  delay(200); // Short pause after resetting
+  NSGamepad.write();
+  delay(200);
 }
 
 ////////////////////////////////////////
@@ -83,42 +102,43 @@ void holdStick(int8_t x, int8_t y, unsigned int duration) {
 
 ////////////////////////////////////////
 
+// ─── runMacro ─────────────────────────────────────────────────────────────────
 void runMacro() {
-  // Step 1: Press A three times to register controller and close pairing menu
-  pressButton(BUTTON_A_INDEX, 500, 500);  // A - 1st press
-  pressButton(BUTTON_A_INDEX, 500, 2000); // A - 2nd press and wait
-  pressButton(BUTTON_A_INDEX, 500, 1000); // A - 3rd press 
-  
-  // Step 2: Wait for menu to close
+  // Step 1: Press A three times to register controller and close pairing menus
+  pressButton(BUTTON_A_INDEX, 500, 500);
+  pressButton(BUTTON_A_INDEX, 500, 2000);
+  pressButton(BUTTON_A_INDEX, 500, 1000);
+
   delay(1000);
-  
-  // Step 3: Press L twice quickly to set pen size
-  pressButton(BUTTON_L_INDEX, 50, 50);  // L - quick press
-  pressButton(BUTTON_L_INDEX, 50, 100); // L - quick press with slightly longer pause
-  
-  // Step 4: Clear the canvas
-  pressButton(BUTTON_LCLICK_INDEX, 50, 50); // LStick - quick click
-    
-  // Step 5: Move left analog stick to top-left corner for 7 seconds
-  holdStick(-128, -128, 7000); // Full top-left for 7 seconds
-  
-  // Step 6: Run drawing macro
+
+  // Step 2: Press L twice to select smallest pen size
+  pressButton(BUTTON_L_INDEX, 50, 50);
+  pressButton(BUTTON_L_INDEX, 50, 100);
+
+  // Step 3: L-stick click to clear canvas
+  pressButton(BUTTON_LCLICK_INDEX, 50, 500);
+
+  // Step 4: Hold stick full top-left for 7s to reset cursor to (0,0)
+  holdStick(-128, -128, 7000);
+
+  // Step 5: Draw
   drawImage();
-  
-  // Step 7: Save and exit
-  pressButton(BUTTON_MINUS_INDEX, 50, 50); // Minus - quick press
+
+  // Step 6: Save and exit
+  pressButton(BUTTON_MINUS_INDEX, 50, 500);
 }
 
+// ─── loop ─────────────────────────────────────────────────────────────────────
 void loop() {
   triggerBtn.update();
-  
-  // Trigger macro when button is pressed (falling edge)
+
   if (!macroRunning && triggerBtn.fell()) {
     macroRunning = true;
     runMacro();
     macroRunning = false;
   }
-  
-  // Keep USB reports fresh
+
+  // Keep USB alive between macro runs – loop() is safe here since we're
+  // just refreshing the idle report, not doing time-sensitive sends.
   NSGamepad.loop();
 }
