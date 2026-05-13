@@ -192,24 +192,4 @@ Draw time scales with the number of black pixels. A fully filled 320×120 canvas
 
 ---
 
-## Technical notes
-
-### The missing `usb_nsgamepad_configure()` call
-
-The core issue that prevented button presses from registering (even when the controller was correctly recognized) was a missing line in `usb.c`. The Teensy core calls each USB device's configure function when the USB host completes enumeration. This sets up the transmit endpoint and DMA buffers. Every other USB type (joystick, keyboard, mouse, etc.) had its configure call registered in `usb.c`. NSGadget's `usb_nsgamepad_configure()` was never added. Without it, `usb_nsgamepad_send()` exits immediately on every call because `usb_configuration` is never set, so every HID report is silently dropped. The setup script patches this.
-
-### Why `NSGamepad.write()` not `NSGamepad.loop()`
-
-The `usb_nsgamepad_class::loop()` method only transmits if at least 7ms have elapsed since the last send — it's a rate limiter for the main loop, not a send function. Using it inside `pressButton()` causes sends to be silently skipped when called in rapid succession. The sketch uses `NSGamepad.write()` everywhere inside the macro, which always transmits immediately. `NSGamepad.loop()` is only used in the Arduino `loop()` function to keep the USB connection alive between macro runs.
-
-### Why boards.txt is patched surgically, not replaced
-
-The NSGadget `boards.txt` sets `-std=gnu++14`. Teensy core 1.60.0 headers (particularly `IntervalTimer.h`) use C++17 features (`std::is_arithmetic_v`, `if constexpr`) that fail to compile under `gnu++14`. The setup script appends only the three `nsgamepad` menu lines to the stock `boards.txt`, leaving the `gnu++17` flags intact.
-
-### Why bytecode instead of function calls
-
-An earlier approach generated one Arduino function call per drawing step. For complex images this produced 60,000+ lines of C, which overflowed the Teensy 4.0's 512 KB ITCM region. Storing moves as a `PROGMEM` byte array sidesteps this — data lives in flash (2 MB), only the ~30-line interpreter occupies ITCM. Compile times drop to a few seconds regardless of image complexity.
-
-### NSGadget_Teensy and the Teensy core
-
-NSGadget_Teensy is not a standard Arduino library. It patches USB descriptor and driver files directly into the Teensy core to make the device report as a Nintendo Switch-compatible Hori HoriPAD S controller. The setup script uses the [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) fork.
+Made with 🧡 & 🤖
