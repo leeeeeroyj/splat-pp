@@ -10,7 +10,7 @@ Convert black-and-white PNG images into Arduino sketches that automatically draw
 
 `splat-pp.py` reads a 320×120 pixel B&W PNG and converts it into a sequence of D-Pad moves and A button presses that trace every black pixel on the canvas.
 
-The drawing sequence is encoded as a compact bytecode array stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code — well within the Teensy 4.0's limits.
+The drawing sequence is encoded as a fcompact bytecode array stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code — well within the Teensy 4.0's limits.
 
 ### Drawing strategy
 
@@ -57,7 +57,7 @@ pip install pillow numpy
 
 ## Setup
 
-Run the setup script once. It installs and patches everything needed to compile and flash sketches from the command line — no Arduino IDE required.
+Run the setup script once. It installs and patches everything needed to compile and flash sketches from the command line. No Arduino IDE required!
 
 ```bash
 chmod +x setup-nsgadget.sh
@@ -71,10 +71,10 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 1. Installs `arduino-cli`
 2. Configures `arduino-cli` to use `~/Arduino` as its data directory
 3. Installs the Teensy 4.0 core (v1.60.0)
-4. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy) — provides the USB HID descriptor files that make the Teensy appear as a Hori HoriPAD S controller
+4. Clones [dmadison/NSGadget_Teensy](https://github.com/dmadison/NSGadget_Teensy)  - Provides the USB HID descriptor files that make the Teensy appear as a Hori HoriPAD S controller
 5. Installs the `Bounce2` library
 6. Copies the NSGamepad USB descriptor files (`usb_nsgamepad.c/h`, `usb_desc.c/h`, `usb_inst.cpp`) into the Teensy core
-7. **Surgically patches `boards.txt`** — appends only the `usb=nsgamepad` USB type entry, preserving the stock `gnu++17` compiler flags that Teensy core 1.60.0 requires
+7. **Surgically patches `boards.txt`** - appends only the `usb=nsgamepad` USB type entry, preserving the stock `gnu++17` compiler flags that Teensy core 1.60.0 requires
 8. **Patches `usb.c`** — adds the missing `usb_nsgamepad_configure()` call to the USB configuration callback. Without this, the HID endpoint never opens and no button reports are sent even though the controller is recognised
 9. Patches `WProgram.h` to include `usb_nsgamepad.h`
 10. Patches `Print.cpp` and `yield.cpp` to disable Serial references in NSGamepad USB mode
@@ -148,7 +148,7 @@ Done! Connect your Teensy to the Switch and head to the plaza post printer!
 ## Drawing workflow
 
 1. In Splatoon 3, open the **Plaza Post Printer** and start a new post
-2. Press the **sync button** on your real controller to disconnect it — the controller pairing screen will appear
+2. Press the **sync button** on your real controller to disconnect it.  The controller pairing screen will appear.
 3. Plug the Teensy into the Switch via USB
 4. Press the **button wired to GPIO pin 0** on the Teensy **once**
 5. The macro will automatically:
