@@ -2,6 +2,8 @@
 
 Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's Plaza Post canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller (Hori HoriPAD S).
 
+![splat-pp](splat-pp.jpg)\
+
 ![Example Image](example.png)
 
 ---
