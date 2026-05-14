@@ -2,7 +2,7 @@
 
 Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's Plaza Post canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller (Hori HoriPAD S).
 
-![splat-pp](splat-pp.jpg)\
+![splat-pp](splat-pp.jpg)
 
 ![Example Image](example.png)
 
@@ -50,10 +50,10 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 - Git
 - `arduino-cli`
 - `teensy_loader_cli`
-- Python packages: `pillow`, `numpy`
+- Python packages: `pillow`, `numpy`, `textual`
 
 ```bash
-pip install pillow numpy
+pip install pillow numpy textual
 ```
 
 ---
