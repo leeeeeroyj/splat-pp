@@ -14,7 +14,7 @@ The drawing sequence is encoded as a fcompact bytecode array stored in the Ardui
 
 ### Drawing strategy
 
-Pixels are visited using a "snake scan" (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimises total cursor travel and keeps draw time as short as possible.
+Pixels are visited using a "snake scan" (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
 
 ### Bytecode format
 
@@ -39,6 +39,7 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 - Teensy 4.0 microcontroller
 - USB cable (Teensy → Nintendo Switch or PC)
 - A momentary push button wired between GPIO pin 0 and GND (or bridge the pins directly)
+  ![Teensy 4.0](teensy.png)
 
 ### Software
 
@@ -75,7 +76,7 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 5. Installs the `Bounce2` library
 6. Copies the NSGamepad USB descriptor files (`usb_nsgamepad.c/h`, `usb_desc.c/h`, `usb_inst.cpp`) into the Teensy core
 7. **Surgically patches `boards.txt`** - appends only the `usb=nsgamepad` USB type entry, preserving the stock `gnu++17` compiler flags that Teensy core 1.60.0 requires
-8. **Patches `usb.c`** — adds the missing `usb_nsgamepad_configure()` call to the USB configuration callback. Without this, the HID endpoint never opens and no button reports are sent even though the controller is recognised
+8. **Patches `usb.c`** — adds the missing `usb_nsgamepad_configure()` call to the USB configuration callback. Without this, the HID endpoint never opens and no button reports are sent even though the controller is recognized
 9. Patches `WProgram.h` to include `usb_nsgamepad.h`
 10. Patches `Print.cpp` and `yield.cpp` to disable Serial references in NSGamepad USB mode
 11. Installs Teensy udev rules (allows flashing without `sudo`)
