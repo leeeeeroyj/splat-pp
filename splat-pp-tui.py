@@ -23,6 +23,7 @@ try:
     from textual.binding import Binding
     from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
     from textual.screen import Screen
+    from textual import events
     from textual.widgets import (
         Button, Footer, Header, Input, Label, ListItem, ListView,
         RichLog, Static,
@@ -71,12 +72,12 @@ PANEL_BG    = "#16213E"
 # ── ASCII splash art ──────────────────────────────────────────────────────────
 SPLASH_ART = r"""
 [bold #F6E229]
-  ███████╗██████╗ ██╗      █████╗ ████████╗        ██████╗  ██████╗ 
-  ██╔════╝██╔══██╗██║     ██╔══██╗╚══██╔══╝       ██╔══██╗ ██╔══██╗
-  ███████╗██████╔╝██║     ███████║   ██║    ████╗ ██████╔╝ ██████╔╝
-  ╚════██║██╔═══╝ ██║     ██╔══██║   ██║    ╚═══╝ ██╔═══╝  ██╔═══╝ 
-  ███████║██║     ███████╗██║  ██║   ██║          ██║      ██║     
-  ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝          ╚═╝      ╚═╝     
+  ███████╗██████╗ ██╗      █████╗ ████████╗       ██████╗ ██████╗ 
+  ██╔════╝██╔══██╗██║     ██╔══██╗╚══██╔══╝       ██╔══██╗██╔══██╗
+  ███████╗██████╔╝██║     ███████║   ██║    ████╗ ██████╔╝██████╔╝
+  ╚════██║██╔═══╝ ██║     ██╔══██║   ██║    ╚═══╝ ██╔═══╝ ██╔═══╝ 
+  ███████║██║     ███████╗██║  ██║   ██║          ██║     ██║     
+  ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝          ╚═╝     ╚═╝     
 [/bold #F6E229]"""
 
 SPLASH_SUB = "[bold #3BC335]  Splatoon 3 Plaza Post Printer[/bold #3BC335] \n [dim #F6E229]  by …LEEEEROYJ [/dim #F6E229]"
@@ -313,7 +314,8 @@ class SplashScreen(Screen):
 class ImageSelectScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
-        Binding("enter", "select_image", "Select"),
+        Binding("enter", "select_image", "Start"),
+        Binding("c", "configure", "Configure"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -324,7 +326,7 @@ class ImageSelectScreen(Screen):
             with ScrollableContainer(id="img-list-container"):
                 yield ListView(*items, id="img-list")
             yield Static(
-                f"[{INK_TEAL}]↑ ↓ to browse  ·  Enter to select  ·  Esc to go back[/{INK_TEAL}]",
+                f"[{INK_TEAL}]↑ ↓ to browse  ·  Enter to start  ·  C to configure  ·  Esc to go back[/{INK_TEAL}]",
                 id="img-hint",
                 markup=True,
             )
@@ -358,14 +360,28 @@ class ImageSelectScreen(Screen):
         except Exception:
             pass
 
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            self.action_select_image()
+            event.stop()
+        elif event.key == "c":
+            self.action_configure()
+            event.stop()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        selected_path = Path(event.item.name)
-        self.app.push_screen(ParamsScreen(selected_path))
+        pass  # Don't auto-navigate; let keybindings handle it
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
 
     def action_select_image(self) -> None:
+        lv = self.query_one("#img-list", ListView)
+        if lv.highlighted_child:
+            selected_path = Path(lv.highlighted_child.name)
+            # Use default params: duration=25, template=sketch.txt
+            self.app.push_screen(RunScreen(selected_path, 25, Path("sketch.txt")))
+
+    def action_configure(self) -> None:
         lv = self.query_one("#img-list", ListView)
         if lv.highlighted_child:
             selected_path = Path(lv.highlighted_child.name)
@@ -449,20 +465,20 @@ class RunScreen(Screen):
             yield Button("✅  Done! Start over", id="btn-done", variant="success")
 
     def on_mount(self) -> None:
+        log = self.query_one("#run-log", RichLog)
+        log.write(Text.from_markup(f"[bold {INK_YELLOW}]⏳  Compiling…[/bold {INK_YELLOW}]"))
+        self.app.refresh()
         self.run_worker(self._run_pipeline(), exclusive=True)
-
-    def run_worker(self, coro, exclusive=False):
-        self.app.call_after_refresh(lambda: asyncio.ensure_future(coro))
 
     async def _run_pipeline(self) -> None:
         log = self.query_one("#run-log", RichLog)
         status = self.query_one("#run-status", Static)
 
-        def info(msg):  log.write(Text.from_markup(f"[bold {INK_TEAL}]›[/bold {INK_TEAL}] {msg}"))
-        def ok(msg):    log.write(Text.from_markup(f"[bold {INK_GREEN}]✓[/bold {INK_GREEN}] {msg}"))
-        def warn(msg):  log.write(Text.from_markup(f"[bold {INK_YELLOW}]⚠[/bold {INK_YELLOW}] {msg}"))
-        def err(msg):   log.write(Text.from_markup(f"[bold {INK_ORANGE}]✗[/bold {INK_ORANGE}] {msg}"))
-        def raw(msg):   log.write(Text(msg, style="dim"))
+        async def info(msg):  log.write(Text.from_markup(f"[bold {INK_TEAL}]›[/bold {INK_TEAL}] {msg}")); await asyncio.sleep(0)
+        async def ok(msg):    log.write(Text.from_markup(f"[bold {INK_GREEN}]✓[/bold {INK_GREEN}] {msg}")); await asyncio.sleep(0)
+        async def warn(msg):  log.write(Text.from_markup(f"[bold {INK_YELLOW}]⚠[/bold {INK_YELLOW}] {msg}")); await asyncio.sleep(0)
+        async def err(msg):   log.write(Text.from_markup(f"[bold {INK_ORANGE}]✗[/bold {INK_ORANGE}] {msg}")); await asyncio.sleep(0)
+        async def raw(msg):   log.write(Text(msg, style="dim")); await asyncio.sleep(0)
 
         if splat_pp is None:
             err(f"Failed to import splat-pp.py: {_IMPORT_ERROR}")
@@ -473,35 +489,35 @@ class RunScreen(Screen):
 
         try:
             # ── Load image ────────────────────────────────────────────────────
-            info(f"Loading image: [bold]{self.image_path}[/bold]")
+            await info(f"Loading image: [bold]{self.image_path}[/bold]")
             await asyncio.sleep(0.05)
             black = await asyncio.get_event_loop().run_in_executor(
                 None, splat_pp.load_image, str(self.image_path)
             )
             pixel_count = int(black.sum())
-            ok(f"Black pixels: [bold]{pixel_count:,}[/bold] / {splat_pp.CANVAS_W * splat_pp.CANVAS_H:,}")
+            await ok(f"Black pixels: [bold]{pixel_count:,}[/bold] / {splat_pp.CANVAS_W * splat_pp.CANVAS_H:,}")
 
-            # ── Plan moves ────────────────────────────────────────────────────
-            info("Planning snake-scan move sequence…")
+            # ── Plan moves ──────────────────────────────────────────────────
+            await info("Planning snake-scan move sequence…")
             await asyncio.sleep(0.05)
             pixels = await asyncio.get_event_loop().run_in_executor(
                 None, splat_pp.plan_moves, black
             )
-            ok(f"Draw operations: [bold]{len(pixels):,}[/bold]")
+            await ok(f"Draw operations: [bold]{len(pixels):,}[/bold]")
 
-            # ── Encode bytecode ───────────────────────────────────────────────
-            info("Encoding bytecode…")
+            # ── Encode bytecode ──────────────────────────────────────────────────
+            await info("Encoding bytecode…")
             await asyncio.sleep(0.05)
             bytecode = await asyncio.get_event_loop().run_in_executor(
                 None, splat_pp.encode_bytecode, pixels
             )
             actions = splat_pp.count_actions(bytecode)
             est_s = (actions * self.duration * 2) / 1000
-            ok(f"Bytecode size: [bold]{len(bytecode):,} bytes[/bold]")
-            ok(f"Estimated draw time: [bold]{est_s:.0f}s ({est_s/60:.1f} min)[/bold]")
+            await ok(f"Bytecode size: [bold]{len(bytecode):,} bytes[/bold]")
+            await ok(f"Estimated draw time: [bold]{est_s:.0f}s ({est_s/60:.1f} min)[/bold]")
 
-            # ── Generate sketch ───────────────────────────────────────────────
-            info("Generating sketch…")
+            # ── Generate sketch ──────────────────────────────────────────────────
+            await info("Generating sketch…")
             await asyncio.sleep(0.05)
             draw_fn = splat_pp.generate_draw_function(
                 bytecode, pixel_count, self.duration, self.image_path.name, actions
@@ -512,10 +528,10 @@ class RunScreen(Screen):
             sketch_dir.mkdir(parents=True, exist_ok=True)
             out_path = sketch_dir / f"{base_name}.ino"
             out_path.write_text(full_sketch, encoding="utf-8")
-            ok(f"Written to: [bold]{out_path}[/bold]")
+            await ok(f"Written to: [bold]{out_path}[/bold]")
 
-            # ── Compile ───────────────────────────────────────────────────────
-            info("Compiling with arduino-cli…")
+            # ── Compile ─────────────────────────────────────────────────────────
+            await info("Compiling with arduino-cli…")
             await asyncio.sleep(0.05)
             splat_pp.BUILD_DIR.mkdir(parents=True, exist_ok=True)
             proc = await asyncio.create_subprocess_exec(
@@ -529,20 +545,20 @@ class RunScreen(Screen):
             stdout, stderr = await proc.communicate()
             for line in stdout.decode().splitlines():
                 if "Sketch uses" in line or "Global variables" in line:
-                    ok(line.strip())
+                    await ok(line.strip())
                 elif line.strip():
-                    raw(line.strip())
+                    await raw(line.strip())
             if proc.returncode != 0:
                 for line in stderr.decode().splitlines():
-                    err(line)
+                    await err(line)
                 raise RuntimeError("Compile failed")
-            ok("Compile successful!")
+            await ok("Compile successful!")
 
             hex_file = splat_pp.BUILD_DIR / f"{base_name}.ino.hex"
             if not hex_file.exists():
                 raise RuntimeError(f"Hex file not found: {hex_file}")
 
-            # ── Flash ─────────────────────────────────────────────────────────
+            # ── Show Ready to Flash Stage ────────────────────────────────────
             log.write("")
             log.write(Text.from_markup(
                 f"[bold {INK_YELLOW}]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold {INK_YELLOW}]"
@@ -551,17 +567,24 @@ class RunScreen(Screen):
                 f"[bold {INK_YELLOW}]  Ready to flash![/bold {INK_YELLOW}]"
             ))
             log.write(Text.from_markup(
-                f"[{INK_TEAL}]  Press the button on your Teensy 4.0, then press Enter here…[/{INK_TEAL}]"
+                f"[{INK_TEAL}]  Press the button on your Teensy 4.0…[/{INK_TEAL}]"
             ))
             log.write(Text.from_markup(
                 f"[bold {INK_YELLOW}]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold {INK_YELLOW}]"
             ))
+            self.app.refresh()
 
-            status.update(f"[bold {INK_YELLOW}]⚡  Waiting for Teensy button press — then press Enter in terminal…[/bold {INK_YELLOW}]")
+            status.update(f"[bold {INK_YELLOW}]⚡  Waiting for Teensy button press…[/bold {INK_YELLOW}]")
+
+            # ── Flash ─────────────────────────────────────────────────────────
+            info("Starting flash…")
+            log.write(Text.from_markup(f"[dim {INK_TEAL}]Waiting for Teensy device…[/dim {INK_TEAL}]"))
+            self.app.refresh()
 
             # Run teensy_loader_cli (blocking — it waits for device)
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._do_flash, hex_file, log
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._do_flash, hex_file, log, loop
             )
 
             # ── Cleanup ───────────────────────────────────────────────────────
@@ -574,17 +597,18 @@ class RunScreen(Screen):
             log.write(Text.from_markup(
                 f"[bold {INK_GREEN}]🦑  ALL DONE!  Connect your Teensy to the Switch and head to the plaza post printer![/bold {INK_GREEN}]"
             ))
+            self.app.refresh()
             status.update(f"[bold {INK_GREEN}]✅  Done! Your ink is ready to flow.[/bold {INK_GREEN}]")
 
         except Exception as exc:
-            err(f"Error: {exc}")
+            await err(f"Error: {exc}")
             status.update(f"[bold {INK_ORANGE}]❌  Something went wrong. Check the log above.[/bold {INK_ORANGE}]")
 
         finally:
             done_btn = self.query_one("#btn-done", Button)
             done_btn.styles.display = "block"
 
-    def _do_flash(self, hex_file, log):
+    def _do_flash(self, hex_file, log, loop):
         """Blocking flash call (runs in executor so TUI stays responsive)."""
         import threading
         result = subprocess.run(
@@ -597,16 +621,22 @@ class RunScreen(Screen):
             capture_output=True,
             text=True,
         )
+        write_done = threading.Event()
+        
         def _write():
-            rlog = self.query_one("#run-log", RichLog)
-            for line in result.stdout.splitlines():
-                rlog.write(Text(line, style=f"dim {INK_TEAL}"))
-            if result.returncode != 0:
-                for line in result.stderr.splitlines():
-                    rlog.write(Text.from_markup(f"[{INK_ORANGE}]✗ {line}[/{INK_ORANGE}]"))
-                raise RuntimeError("Flash failed")
-        import asyncio as _aio
-        _aio.get_event_loop().call_soon_threadsafe(_write)
+            try:
+                rlog = self.query_one("#run-log", RichLog)
+                for line in result.stdout.splitlines():
+                    rlog.write(Text(line, style=f"dim {INK_TEAL}"))
+                if result.returncode != 0:
+                    for line in result.stderr.splitlines():
+                        rlog.write(Text.from_markup(f"[{INK_ORANGE}]✗ {line}[/{INK_ORANGE}]"))
+            finally:
+                write_done.set()
+        
+        loop.call_soon_threadsafe(_write)
+        write_done.wait()  # Block until UI thread has written output
+        
         if result.returncode != 0:
             raise RuntimeError("Flash failed")
 
