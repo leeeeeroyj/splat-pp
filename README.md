@@ -90,6 +90,19 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 
 ## Usage
 
+### TUI
+
+```
+python splat-pp-tui.py
+```
+
+Follow the prompts to flash!
+
+![Splat-PP TUI](splat-pp-tui.png)
+
+
+### The 1 Liner
+
 ```
 python splat-pp.py <image.png> [--duration <ms>] [--template <file>]
 ```
