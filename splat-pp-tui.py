@@ -80,7 +80,9 @@ SPLASH_ART = r"""
   ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝          ╚═╝     ╚═╝     
 [/bold #F6E229]"""
 
-SPLASH_SUB = "[bold #3BC335]  Splatoon 3 Plaza Post Printer[/bold #3BC335] \n [dim #F6E229]  by …LEEEEROYJ [/dim #F6E229]"
+SPLASH_SUB = "[bold #3BC335]  Splatoon 3 Plaza Post Printer[/bold #3BC335] \n \
+[dim #F6E229]  by …LEEEEROYJ [/dim #F6E229] \n\n \
+[dim #F6E229] Press any key to get started![/dim #F6E229]"
 
 SPLAT_DECO = "[#F55F00]  ╰( ◕ ᗜ ◕ )╮ ✦ ✦ ✦  Ink it up, squids! ✦ ✦ ✦[/#F55F00]"
 

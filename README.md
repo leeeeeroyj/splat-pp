@@ -96,10 +96,8 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 python splat-pp-tui.py
 ```
 
-Follow the prompts to flash!
-
+Press any key on the spash screen adn then follow the prompts to flash! The TUI expects your source images to be in the img/ directory.
 ![Splat-PP TUI](splat-pp-tui.png)
-
 
 ### The 1 Liner
 
