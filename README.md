@@ -179,7 +179,7 @@ Done! Connect your Teensy to the Switch and head to the plaza post printer!
 
 For best results, prepare your image at exactly 320×120 in an image editor and convert to 1-bit B&W before running the script.
 
-Vertical images can be rotated after they are drawn on the canvas. You can "print" them horizontally, with the bottom of the vertical image on the left, and then rotate after printing. 
+Vertical images can be rotated after they are drawn on the canvas. You can "print" them horizontally, with the bottom of the vertical image on the right, and then rotate after printing. 
 
 ![vertical example](img/splatgraf.png)
 
