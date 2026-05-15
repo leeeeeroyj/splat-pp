@@ -1,1 +1,5 @@
 *.png
+
+!example.png
+!calibration.png
+!splatgraf.png

@@ -1,36 +1,22 @@
 # splat-pp - Splatoon 3 Post Printer
 
-Convert black-and-white PNG images into Arduino sketches that automatically draw on Splatoon 3's Plaza Post canvas, using a Teensy 4.0 microcontroller emulating a Nintendo Switch Pro Controller (Hori HoriPAD S).
+Convert black-and-white PNG images into Arduino sketches that are automatically drawn on Splatoon 3's Plaza Post canvas.
 
-![splat-pp](splat-pp.jpg)
+![Game Image](media/game.jpg)
 
-![Example Image](example.png)
+![Example Image](img/example.png) 
 
 ---
 
 ## How it works
 
+A Teensy 4.0 microcontroller is used to emulate a Nintendo Switch Pro Controller (Hori HoriPAD S) and run a macro to control the brush tool and draw on the canvas. 
+
 `splat-pp.py` reads a 320×120 pixel B&W PNG and converts it into a sequence of D-Pad moves and A button presses that trace every black pixel on the canvas.
 
 The drawing sequence is encoded as a fcompact bytecode array stored in the Arduino sketch's flash memory (`PROGMEM`). A small interpreter loop (~30 lines of C) reads and executes each opcode at runtime. Even a fully dense image produces only ~70 KB of data and a few hundred bytes of machine code, well within the Teensy 4.0's limits.
 
-### Drawing strategy
-
-Pixels are visited using a "snake scan" (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
-
-### Bytecode format
-
-Each instruction is 1–2 bytes:
-
-| Opcode | Hex | Arguments | Action |
-|--------|-----|-----------|--------|
-| `OP_DRAW` | `0x00` | — | Press A (stamp pixel) |
-| `OP_UP` | `0x01` | `n` (1 byte) | Move cursor up n steps |
-| `OP_DOWN` | `0x02` | `n` (1 byte) | Move cursor down n steps |
-| `OP_LEFT` | `0x03` | `n` (1 byte) | Move cursor left n steps |
-| `OP_RIGHT` | `0x04` | `n` (1 byte) | Move cursor right n steps |
-
-Moves larger than 255 steps are split into multiple instructions automatically.
+The drawing is combined with a sketch template that handles registering the controller with the Switch, setting up the canvas for a new drawing, and saving the post after the drawing is complete. The sketch gets compiled and flashed on the Teensy. 
 
 ---
 
@@ -41,7 +27,11 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 - Teensy 4.0 microcontroller
 - USB cable (Teensy → Nintendo Switch or PC)
 - A momentary push button wired between GPIO pin 0 and GND (or bridge the pins directly)
-  ![Teensy 4.0](teensy.png)
+  ![Teensy 4.0](media/teensy.png)
+
+You can just bridge the connection to 0 and GND when you want to kick off the macro, or you can hook up the momentary button. I 3d printed a basic enclosure for mine. I used a small piece of extra filament with one side melted and flattend down for the programming button. 
+
+![splat-pp](media/splat-pp.jpg)
 
 ### Software
 
@@ -55,7 +45,6 @@ Moves larger than 255 steps are split into multiple instructions automatically.
 ```bash
 pip install pillow numpy textual
 ```
-
 ---
 
 ## Setup
@@ -96,8 +85,8 @@ The script is safe to re-run. Each step is guarded and skipped if already comple
 python splat-pp-tui.py
 ```
 
-Press any key on the spash screen adn then follow the prompts to flash! The TUI expects your source images to be in the img/ directory.
-![Splat-PP TUI](splat-pp-tui.png)
+Press any key on the spash screen and then follow the prompts to flash! The TUI expects your source images to be in the img/ directory.
+![Splat-PP TUI](media/splat-pp-tui.png)
 
 ### The 1 Liner
 
@@ -163,13 +152,13 @@ Done! Connect your Teensy to the Switch and head to the plaza post printer!
 
 ---
 
-## Drawing workflow
+## Using it with Splatoon 3
 
 1. In Splatoon 3, open the **Plaza Post Printer** and start a new post
 2. Press the **sync button** on your real controller to disconnect it.  The controller pairing screen will appear.
 3. Plug the Teensy into the Switch via USB
 4. Press the **button wired to GPIO pin 0** on the Teensy **once**
-5. The macro will automatically:
+5. The macro will run and automatically:
    - Register the controller with the Switch (3× A press)
    - Select the smallest pen size (2× L press)
    - Clear the canvas (L-stick click)
@@ -190,6 +179,10 @@ Done! Connect your Teensy to the Switch and head to the plaza post printer!
 
 For best results, prepare your image at exactly 320×120 in an image editor and convert to 1-bit B&W before running the script.
 
+Vertical images can be rotated after they are drawn on the canvas. You can "print" them horizontally, with the bottom of the vertical image on the left, and then rotate after printing. 
+
+![vertical example](img/splatgraf.png)
+
 ---
 
 ## Timing
@@ -203,6 +196,26 @@ The `--duration` parameter controls how long each D-Pad tap or button press is h
 | 50ms | Very reliable | ~60 min |
 
 Draw time scales with the number of black pixels. A fully filled 320×120 canvas at 25ms takes roughly 50–60 minutes.
+
+---
+
+### Drawing strategy
+
+Pixels are visited using a "snake scan" (boustrophedon): left-to-right on even rows, right-to-left on odd rows. This minimizes total cursor travel and keeps draw time as short as possible.
+
+### Bytecode format
+
+Each instruction is 1–2 bytes:
+
+| Opcode | Hex | Arguments | Action |
+|--------|-----|-----------|--------|
+| `OP_DRAW` | `0x00` | — | Press A (stamp pixel) |
+| `OP_UP` | `0x01` | `n` (1 byte) | Move cursor up n steps |
+| `OP_DOWN` | `0x02` | `n` (1 byte) | Move cursor down n steps |
+| `OP_LEFT` | `0x03` | `n` (1 byte) | Move cursor left n steps |
+| `OP_RIGHT` | `0x04` | `n` (1 byte) | Move cursor right n steps |
+
+Moves larger than 255 steps are split into multiple instructions automatically.
 
 ---
 
